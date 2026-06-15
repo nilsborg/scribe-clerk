@@ -8,7 +8,7 @@ struct VoiceMemoTranscriberApp: App {
         WindowGroup {
             ContentView()
         }
-        .defaultSize(width: 720, height: 640)
+        .defaultSize(width: 960, height: 680)
 
         Settings {
             SettingsView()

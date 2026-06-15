@@ -6,55 +6,62 @@ struct ContentView: View {
     @State private var showFileImporter = false
 
     private var selectedJob: TranscriptionJob? {
-        guard let selectedJobID = appState.selectedJobID else { return nil }
-        return appState.jobs.first { $0.id == selectedJobID }
+        guard let detailJobID = appState.detailJobID else { return nil }
+        return appState.jobs.first { $0.id == detailJobID }
     }
 
     var body: some View {
-        Group {
-            if let job = selectedJob {
-                JobDetailView(
-                    job: job,
-                    status: appState.status(for: job),
-                    isSummarizing: appState.isSummarizing,
-                    onTranscribe: {
-                        appState.pendingRequest = .files(
-                            [job.audioURL],
-                            title: "Transcribe “\(job.displayName)”"
-                        )
-                    },
-                    onReveal: {
-                        appState.revealInFinder(job)
-                    },
-                    onSummarize: { record in
-                        appState.summarizerRequest = SummarizerRequest(job: job, record: record)
-                    }
-                )
-            } else {
-                emptyState
+        NavigationSplitView {
+            JobSidebarView(appState: appState) {
+                showFileImporter = true
+            }
+            .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 340)
+        } detail: {
+            Group {
+                if let job = selectedJob {
+                    JobDetailView(
+                        job: job,
+                        status: appState.status(for: job),
+                        isSummarizing: appState.isSummarizerQueueActive
+                            || appState.activeSummarizerJobID == job.id,
+                        onTranscribe: {
+                            appState.pendingRequest = .files(
+                                [job.audioURL],
+                                title: "Transcribe “\(job.displayName)”"
+                            )
+                        },
+                        onReveal: {
+                            appState.revealInFinder(job)
+                        },
+                        onSummarize: { _ in
+                            appState.beginSummarize(jobIDs: [job.id])
+                        }
+                    )
+                } else {
+                    emptyState
+                }
+            }
+            .frame(minWidth: 480, minHeight: 520)
+            .onDrop(of: AudioDropTypes.accepted, isTargeted: nil, perform: handleWindowDrop)
+        }
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    appState.isWhisperLogPanelVisible.toggle()
+                } label: {
+                    Label("Whisper Log", systemImage: "terminal")
+                }
+                .help("Show live whisper-cli output")
             }
         }
-        .frame(minWidth: 640, minHeight: 520)
-        .onDrop(of: AudioDropTypes.accepted, isTargeted: nil, perform: handleWindowDrop)
-        .toolbar {
-            if appState.jobs.count > 1 {
-                ToolbarItem(placement: .navigation) {
-                    Picker("Transcript", selection: $appState.selectedJobID) {
-                        ForEach(appState.jobs) { job in
-                            Text(job.displayName).tag(job.id as String?)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: 220)
-                }
-            }
-
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showFileImporter = true
-                } label: {
-                    Label("Open Audio", systemImage: "plus")
-                }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if appState.isWhisperLogPanelVisible {
+                WhisperLogPanel(
+                    text: appState.whisperLogText,
+                    isRunning: appState.isQueueActive,
+                    onClear: appState.clearWhisperLog,
+                    onClose: { appState.isWhisperLogPanelVisible = false }
+                )
             }
         }
         .fileImporter(
@@ -69,32 +76,24 @@ struct ContentView: View {
         .sheet(item: $appState.pendingRequest) { request in
             TranscriptionOptionsView(
                 request: request,
+                queueIsActive: appState.isQueueActive,
+                pendingQueueCount: appState.pendingQueueCount,
                 onCancel: { appState.pendingRequest = nil },
                 onStart: { options in
                     let urls = request.urls
                     appState.pendingRequest = nil
-                    Task {
-                        if urls.count == 1,
-                           let job = appState.jobs.first(where: { $0.id == TranscriptionJob.stableID(for: urls[0]) }) {
-                            await appState.transcribe(job: job, options: options)
-                        } else {
-                            await appState.transcribeBatch(urls: urls, options: options)
-                        }
-                    }
+                    appState.enqueueTranscriptions(urls: urls, options: options)
                 }
             )
         }
         .sheet(item: $appState.summarizerRequest) { request in
             SummarizerOptionsView(
                 request: request,
+                queueIsActive: appState.isSummarizerQueueActive,
                 onCancel: { appState.summarizerRequest = nil },
                 onStart: { options in
-                    let job = request.job
-                    let record = request.record
                     appState.summarizerRequest = nil
-                    Task {
-                        await appState.sendToSummarizer(job: job, record: record, options: options)
-                    }
+                    appState.enqueueSummarizations(items: request.items, options: options)
                 }
             )
         }
@@ -114,7 +113,7 @@ struct ContentView: View {
         VStack(spacing: 24) {
             AudioDropZone(
                 title: "Drop recordings here",
-                subtitle: "Drag from Voice Memos, Finder, or any audio file"
+                subtitle: "Drop one or many files — they’ll queue up and transcribe in order"
             ) { urls in
                 appState.receiveAudioFiles(urls)
             }
@@ -227,6 +226,17 @@ private struct JobDetailView: View {
                 description: Text("Choose language and model, then run Whisper on this recording.")
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .queued:
+            VStack(spacing: 12) {
+                Image(systemName: "clock")
+                    .font(.largeTitle)
+                    .foregroundStyle(.secondary)
+                Text("Waiting in queue")
+                    .font(.headline)
+                Text("Earlier transcriptions will finish first.")
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .inProgress:
             VStack(spacing: 12) {
                 ProgressView()
@@ -294,10 +304,12 @@ private struct JobDetailView: View {
     }
 
     private var isTranscribeDisabled: Bool {
-        if case .inProgress = status {
+        switch status {
+        case .inProgress, .queued:
             return true
+        default:
+            return false
         }
-        return false
     }
 }
 

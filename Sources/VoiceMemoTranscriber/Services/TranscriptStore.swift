@@ -70,6 +70,11 @@ struct TranscriptStore {
         }
     }
 
+    func delete(for key: String) {
+        try? FileManager.default.removeItem(at: jsonFileURL(for: key))
+        try? FileManager.default.removeItem(at: legacyTextFileURL(for: key))
+    }
+
     private func jsonFileURL(for key: String) -> URL {
         rootDirectory.appendingPathComponent("\(key).json")
     }

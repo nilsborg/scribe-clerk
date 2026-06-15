@@ -37,7 +37,47 @@ struct TranscriptionJob: Identifiable, Equatable {
 
 enum TranscriptionStatus: Equatable {
     case notStarted
+    case queued
     case inProgress
     case completed(TranscriptRecord)
     case failed(String)
+
+    var isActive: Bool {
+        switch self {
+        case .queued, .inProgress:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var statusLabel: String {
+        switch self {
+        case .notStarted:
+            return "Ready"
+        case .queued:
+            return "Queued"
+        case .inProgress:
+            return "Transcribing…"
+        case .completed:
+            return "Done"
+        case .failed:
+            return "Failed"
+        }
+    }
+
+    var statusIcon: String {
+        switch self {
+        case .notStarted:
+            return "circle"
+        case .queued:
+            return "clock"
+        case .inProgress:
+            return "waveform"
+        case .completed:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "exclamationmark.triangle.fill"
+        }
+    }
 }

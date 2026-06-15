@@ -6,6 +6,7 @@ enum WhisperTranscriberError: LocalizedError {
     case missingAudio(URL)
     case processFailed(String)
     case emptyOutput(details: String)
+    case cancelled
 
     var errorDescription: String? {
         switch self {
@@ -19,14 +20,27 @@ enum WhisperTranscriberError: LocalizedError {
             return message
         case .emptyOutput(let details):
             return "Whisper finished but returned no transcript.\n\n\(details)"
+        case .cancelled:
+            return "Transcription was stopped."
         }
     }
 }
 
-struct WhisperTranscriber {
+final class WhisperTranscriber {
     private let audioConverter = AudioConverter()
+    private var activeProcess: Process?
 
-    func transcribe(audioURL: URL, options: TranscriptionOptions) async throws -> TranscriptRecord {
+    func cancel() {
+        activeProcess?.terminate()
+    }
+
+    func transcribe(
+        audioURL: URL,
+        options: TranscriptionOptions,
+        onLog: (@MainActor (String) -> Void)? = nil
+    ) async throws -> TranscriptRecord {
+        try Task.checkCancellation()
+
         let settings = AppSettings.shared
         let binaryURL = URL(fileURLWithPath: settings.whisperBinaryPath)
         let modelURL = URL(fileURLWithPath: options.modelPath)
@@ -72,20 +86,37 @@ struct WhisperTranscriber {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        let finishStdout = attachStream(to: stdoutPipe.fileHandleForReading, onLog: onLog)
+        let finishStderr = attachStream(to: stderrPipe.fileHandleForReading, prefix: "[stderr] ", onLog: onLog)
+
+        activeProcess = process
+        defer {
+            activeProcess = nil
+            _ = finishStdout()
+            _ = finishStderr()
+        }
+
         try process.run()
-        process.waitUntilExit()
 
-        let stdout = String(
-            data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(),
-            encoding: .utf8
-        )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            process.terminationHandler = { process in
+                if Task.isCancelled || process.terminationReason == .uncaughtSignal {
+                    continuation.resume(throwing: WhisperTranscriberError.cancelled)
+                    return
+                }
+                continuation.resume()
+            }
+        }
 
-        let stderr = String(
-            data: stderrPipe.fileHandleForReading.readDataToEndOfFile(),
-            encoding: .utf8
-        )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        try Task.checkCancellation()
+
+        let stdout = finishStdout().trimmingCharacters(in: .whitespacesAndNewlines)
+        let stderr = finishStderr().trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard process.terminationStatus == 0 else {
+            if process.terminationReason == .uncaughtSignal {
+                throw WhisperTranscriberError.cancelled
+            }
             throw WhisperTranscriberError.processFailed(
                 stderr.isEmpty ? "Whisper exited with code \(process.terminationStatus)." : stderr
             )
@@ -107,6 +138,52 @@ struct WhisperTranscriber {
             sourceURLString: nil,
             sourceName: nil
         )
+    }
+
+    private func attachStream(
+        to handle: FileHandle,
+        prefix: String = "",
+        onLog: (@MainActor (String) -> Void)?
+    ) -> () -> String {
+        var accumulated = ""
+
+        handle.readabilityHandler = { fileHandle in
+            let data = fileHandle.availableData
+            guard !data.isEmpty,
+                  let chunk = String(data: data, encoding: .utf8) else {
+                return
+            }
+
+            accumulated += chunk
+            guard let onLog else { return }
+            let output = prefix.isEmpty ? chunk : chunk.split(separator: "\n", omittingEmptySubsequences: false)
+                .map { line in
+                    line.isEmpty ? prefix : "\(prefix)\(line)"
+                }
+                .joined(separator: "\n")
+            Task { @MainActor in
+                onLog(output.hasSuffix("\n") ? output : output + "\n")
+            }
+        }
+
+        return {
+            handle.readabilityHandler = nil
+            let remainingData = handle.readDataToEndOfFile()
+            if let remaining = String(data: remainingData, encoding: .utf8), !remaining.isEmpty {
+                accumulated += remaining
+                if let onLog {
+                    let output = prefix.isEmpty ? remaining : remaining.split(separator: "\n", omittingEmptySubsequences: false)
+                        .map { line in
+                            line.isEmpty ? prefix : "\(prefix)\(line)"
+                        }
+                        .joined(separator: "\n")
+                    Task { @MainActor in
+                        onLog(output.hasSuffix("\n") ? output : output + "\n")
+                    }
+                }
+            }
+            return accumulated
+        }
     }
 
     private func readTranscript(

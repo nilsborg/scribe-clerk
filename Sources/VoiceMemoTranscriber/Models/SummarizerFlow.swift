@@ -41,8 +41,27 @@ struct SummarizerOptions: Equatable {
     var language: SummarizerLanguage
 }
 
-struct SummarizerRequest: Identifiable {
-    let id = UUID()
+struct SummarizerRequestItem: Equatable {
     let job: TranscriptionJob
     let record: TranscriptRecord
+}
+
+struct SummarizerRequest: Identifiable {
+    let id = UUID()
+    let items: [SummarizerRequestItem]
+
+    init(job: TranscriptionJob, record: TranscriptRecord) {
+        self.items = [SummarizerRequestItem(job: job, record: record)]
+    }
+
+    init(items: [SummarizerRequestItem]) {
+        self.items = items
+    }
+
+    var title: String {
+        if items.count == 1 {
+            return items[0].job.displayName
+        }
+        return "\(items.count) Transcripts"
+    }
 }

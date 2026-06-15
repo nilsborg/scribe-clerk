@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SummarizerOptionsView: View {
     let request: SummarizerRequest
+    let queueIsActive: Bool
     let onCancel: () -> Void
     let onStart: (SummarizerOptions) -> Void
 
@@ -10,14 +11,16 @@ struct SummarizerOptionsView: View {
 
     init(
         request: SummarizerRequest,
+        queueIsActive: Bool = false,
         onCancel: @escaping () -> Void,
         onStart: @escaping (SummarizerOptions) -> Void
     ) {
         self.request = request
+        self.queueIsActive = queueIsActive
         self.onCancel = onCancel
         self.onStart = onStart
 
-        let defaults = AppSettings.shared.defaultSummarizerOptions(for: request.record)
+        let defaults = AppSettings.shared.defaultSummarizerOptions(for: request.items[0].record)
         _flow = State(initialValue: defaults.flow)
         _language = State(initialValue: defaults.language)
     }
@@ -28,8 +31,15 @@ struct SummarizerOptionsView: View {
                 Text("Summarize transcript")
                     .font(.title2.bold())
 
-                Text(request.job.displayName)
+                Text(request.title)
                     .foregroundStyle(.secondary)
+
+                if request.items.count > 1 {
+                    Text(request.items.map(\.job.displayName).joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(3)
+                }
             }
 
             Form {
@@ -47,7 +57,7 @@ struct SummarizerOptionsView: View {
             }
             .formStyle(.grouped)
 
-            Text("Exports the transcript to meeting-summaries-to-notion, runs the OpenRouter summary, and creates a Notion page.")
+            Text("Exports each transcript to meeting-summaries-to-notion and creates Notion pages in order.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -58,7 +68,7 @@ struct SummarizerOptionsView: View {
 
                 Spacer()
 
-                Button("Summarize") {
+                Button(startButtonTitle) {
                     onStart(SummarizerOptions(flow: flow, language: language))
                 }
                 .keyboardShortcut(.defaultAction)
@@ -66,6 +76,13 @@ struct SummarizerOptionsView: View {
             }
         }
         .padding(24)
-        .frame(width: 420)
+        .frame(width: 440)
+    }
+
+    private var startButtonTitle: String {
+        if queueIsActive {
+            return "Add to Queue"
+        }
+        return request.items.count > 1 ? "Start Summarize Queue" : "Summarize"
     }
 }

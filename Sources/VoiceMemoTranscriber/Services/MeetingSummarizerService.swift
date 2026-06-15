@@ -23,8 +23,13 @@ enum MeetingSummarizerError: LocalizedError {
     }
 }
 
-struct MeetingSummarizerService {
+final class MeetingSummarizerService {
     private let fileManager = FileManager.default
+    private var activeProcess: Process?
+
+    func cancel() {
+        activeProcess?.terminate()
+    }
 
     func exportTranscript(
         text: String,
@@ -92,6 +97,9 @@ struct MeetingSummarizerService {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        activeProcess = process
+        defer { activeProcess = nil }
+
         try process.run()
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -104,6 +112,11 @@ struct MeetingSummarizerService {
                     data: stderrPipe.fileHandleForReading.readDataToEndOfFile(),
                     encoding: .utf8
                 ) ?? ""
+
+                if process.terminationReason == .uncaughtSignal {
+                    continuation.resume(throwing: MeetingSummarizerError.processFailed("Summarization was stopped."))
+                    return
+                }
 
                 if process.terminationStatus == 0,
                    stdout.contains("✅ Success!") {

@@ -27,6 +27,8 @@ enum TranscriptionRequest: Identifiable {
 
 struct TranscriptionOptionsView: View {
     let request: TranscriptionRequest
+    let queueIsActive: Bool
+    let pendingQueueCount: Int
     let onCancel: () -> Void
     let onStart: (TranscriptionOptions) -> Void
 
@@ -38,10 +40,14 @@ struct TranscriptionOptionsView: View {
 
     init(
         request: TranscriptionRequest,
+        queueIsActive: Bool = false,
+        pendingQueueCount: Int = 0,
         onCancel: @escaping () -> Void,
         onStart: @escaping (TranscriptionOptions) -> Void
     ) {
         self.request = request
+        self.queueIsActive = queueIsActive
+        self.pendingQueueCount = pendingQueueCount
         self.onCancel = onCancel
         self.onStart = onStart
 
@@ -110,7 +116,7 @@ struct TranscriptionOptionsView: View {
 
                 Spacer()
 
-                Button("Transcribe") {
+                Button(startButtonTitle) {
                     onStart(
                         TranscriptionOptions(
                             language: language,
@@ -124,5 +130,12 @@ struct TranscriptionOptionsView: View {
         }
         .padding(24)
         .frame(width: 460)
+    }
+
+    private var startButtonTitle: String {
+        if queueIsActive {
+            return "Add to Queue"
+        }
+        return request.urls.count > 1 ? "Start Queue" : "Transcribe"
     }
 }
