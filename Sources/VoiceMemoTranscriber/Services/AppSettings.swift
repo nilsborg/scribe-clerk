@@ -7,8 +7,7 @@ final class AppSettings {
 
     private enum Keys {
         static let whisperBinaryPath = "whisperBinaryPath"
-        static let modelPath = "modelPath"
-        static let language = "language"
+        static let defaultModelPath = "defaultModelPath"
     }
 
     var whisperBinaryPath: String {
@@ -21,24 +20,41 @@ final class AppSettings {
         }
     }
 
-    var modelPath: String {
+    var defaultModelPath: String {
         get {
-            defaults.string(forKey: Keys.modelPath)
-                ?? FileManager.default.homeDirectoryForCurrentUser
-                    .appendingPathComponent("whisper-models/ggml-small.bin")
-                    .path
+            if let value = defaults.string(forKey: Keys.defaultModelPath) {
+                return value
+            }
+
+            if let legacy = defaults.string(forKey: "modelPath") {
+                defaults.set(legacy, forKey: Keys.defaultModelPath)
+                return legacy
+            }
+
+            return WhisperModelCatalog.preferredDefaultModelPath()
         }
         set {
-            defaults.set(newValue, forKey: Keys.modelPath)
+            defaults.set(newValue, forKey: Keys.defaultModelPath)
         }
     }
 
-    var language: String {
-        get {
-            defaults.string(forKey: Keys.language) ?? "auto"
+    func defaultTranscriptionOptions() -> TranscriptionOptions {
+        let models = WhisperModelCatalog.availableModels(defaultPath: defaultModelPath)
+        let modelPath: String
+
+        if let medium = models.first(where: {
+            URL(fileURLWithPath: $0).lastPathComponent == WhisperModelCatalog.preferredModelFileName
+        }) {
+            modelPath = medium
+        } else if models.contains(defaultModelPath) {
+            modelPath = defaultModelPath
+        } else {
+            modelPath = models.first ?? WhisperModelCatalog.preferredDefaultModelPath()
         }
-        set {
-            defaults.set(newValue, forKey: Keys.language)
-        }
+
+        return TranscriptionOptions(
+            language: "auto",
+            modelPath: modelPath
+        )
     }
 }

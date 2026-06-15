@@ -1,46 +1,49 @@
 # Voice Memo Transcriber
 
-Personal macOS app that reads recordings from Apple Voice Memos and transcribes them locally with [whisper.cpp](https://github.com/ggerganov/whisper.cpp).
+Transcribe audio locally with [whisper.cpp](https://github.com/ggerganov/whisper.cpp) — no cloud, no special permissions.
 
 ## Requirements
 
 - macOS 14+
-- Voice Memos with recordings on this Mac
 - `whisper-cli` (Homebrew: `brew install whisper-cpp`)
-- A GGML model in `~/whisper-models/` (defaults to `ggml-small.bin`)
+- GGML models in `~/whisper-models/` (defaults to `ggml-medium.bin`)
 
 ## Build
 
 ```bash
 cd ~/repos/voice-memo-transcriber
-chmod +x scripts/build-app.sh
 ./scripts/build-app.sh
 open dist/Voice\ Memo\ Transcriber.app
 ```
 
-Or run directly during development:
+## How to use
+
+**From Voice Memos**
+1. Open Voice Memos and this app side by side
+2. Drag a recording from the Voice Memos list onto the app window
+3. Choose language and model, then transcribe
+
+**Other ways**
+- Drop any audio file onto the window (Finder, etc.)
+- Click **+** in the toolbar to pick files
+
+Supports M4A, MP3, WAV, FLAC, OGG, and more.
+
+## Development with Xcode
 
 ```bash
-swift run
+./scripts/open-xcode.sh
 ```
 
-## First launch
+Press **⌘R** to build and run. For the `.app` bundle:
 
-1. Open **System Settings → Privacy & Security → Full Disk Access**
-2. Add **Voice Memo Transcriber** (or Terminal/Cursor if using `swift run`)
-3. Restart the app and click **Refresh**
+```bash
+./scripts/build-app.sh
+```
 
-## Usage
+## Settings (⌘,)
 
-- Select a memo in the sidebar to view or create its transcript
-- **Transcribe** runs `whisper-cli` against the `.m4a` file
-- **Transcribe New** processes all memos that do not have a saved transcript yet
-- Transcripts are cached in `~/Library/Application Support/VoiceMemoTranscriber/transcripts/`
+- Whisper binary path (default: `/opt/homebrew/bin/whisper-cli`)
+- Default model path (default: `~/whisper-models/ggml-medium.bin`)
 
-## Settings
-
-Defaults:
-
-- Whisper binary: `/opt/homebrew/bin/whisper-cli`
-- Model: `~/whisper-models/ggml-small.bin`
-- Language: `auto`
+Transcripts are saved in `~/Library/Application Support/VoiceMemoTranscriber/transcripts/`.

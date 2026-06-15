@@ -1,57 +1,30 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @Environment(\.dismiss) private var dismiss
-
     @State private var whisperPath = AppSettings.shared.whisperBinaryPath
-    @State private var modelPath = AppSettings.shared.modelPath
-    @State private var language = AppSettings.shared.language
+    @State private var defaultModelPath = AppSettings.shared.defaultModelPath
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Settings")
-                .font(.title2.bold())
-
-            Form {
+        Form {
+            Section("Whisper") {
                 TextField("Whisper binary", text: $whisperPath)
-                TextField("Model path", text: $modelPath)
-                TextField("Language (auto, en, de, …)", text: $language)
+                TextField("Default model", text: $defaultModelPath)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Privacy")
-                    .font(.headline)
-
-                Text("Voice Memos lives in a protected folder. Add this app to System Settings > Privacy & Security > Full Disk Access.")
+            Section("How to use") {
+                Text("Drag recordings from Voice Memos into the app window, or use Open Audio in the toolbar.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-
-                Button("Open Full Disk Access Settings") {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-            }
-
-            HStack {
-                Spacer()
-
-                Button("Cancel") {
-                    dismiss()
-                }
-
-                Button("Save") {
-                    AppSettings.shared.whisperBinaryPath = whisperPath
-                    AppSettings.shared.modelPath = modelPath
-                    AppSettings.shared.language = language
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(24)
-        .frame(width: 520)
+        .formStyle(.grouped)
+        .padding(20)
+        .frame(width: 480, height: 220)
+        .onChange(of: whisperPath) { _, newValue in
+            AppSettings.shared.whisperBinaryPath = newValue
+        }
+        .onChange(of: defaultModelPath) { _, newValue in
+            AppSettings.shared.defaultModelPath = newValue
+        }
     }
 }
-
-import AppKit

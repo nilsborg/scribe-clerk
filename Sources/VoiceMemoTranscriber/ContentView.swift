@@ -1,202 +1,147 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @StateObject private var viewModel = VoiceMemoListViewModel()
-    @State private var selectedMemoID: VoiceMemo.ID?
-    @State private var showingSettings = false
+    @ObservedObject private var appState = AppState.shared
+    @State private var showFileImporter = false
 
-    private var selectedMemo: VoiceMemo? {
-        guard let selectedMemoID else { return nil }
-        return viewModel.memos.first { $0.id == selectedMemoID }
+    private var selectedJob: TranscriptionJob? {
+        guard let selectedJobID = appState.selectedJobID else { return nil }
+        return appState.jobs.first { $0.id == selectedJobID }
     }
 
     var body: some View {
-        NavigationSplitView {
-            sidebar
-        } detail: {
-            detailPane
+        Group {
+            if let job = selectedJob {
+                JobDetailView(
+                    job: job,
+                    status: appState.status(for: job),
+                    onTranscribe: {
+                        appState.pendingRequest = .files(
+                            [job.audioURL],
+                            title: "Transcribe “\(job.displayName)”"
+                        )
+                    },
+                    onReveal: {
+                        appState.revealInFinder(job)
+                    }
+                )
+            } else {
+                emptyState
+            }
         }
-        .navigationSplitViewStyle(.balanced)
-        .frame(minWidth: 900, minHeight: 600)
-        .task {
-            await viewModel.loadMemos()
+        .frame(minWidth: 640, minHeight: 520)
+        .onDrop(of: AudioDropTypes.accepted, isTargeted: nil, perform: handleWindowDrop)
+        .toolbar {
+            if appState.jobs.count > 1 {
+                ToolbarItem(placement: .navigation) {
+                    Picker("Transcript", selection: $appState.selectedJobID) {
+                        ForEach(appState.jobs) { job in
+                            Text(job.displayName).tag(job.id as String?)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 220)
+                }
+            }
+
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showFileImporter = true
+                } label: {
+                    Label("Open Audio", systemImage: "plus")
+                }
+            }
         }
-        .sheet(isPresented: $showingSettings) {
-            SettingsView()
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: AudioFileFilter.acceptedTypes,
+            allowsMultipleSelection: true
+        ) { result in
+            if case .success(let urls) = result {
+                appState.receiveAudioFiles(urls)
+            }
+        }
+        .sheet(item: $appState.pendingRequest) { request in
+            TranscriptionOptionsView(
+                request: request,
+                onCancel: { appState.pendingRequest = nil },
+                onStart: { options in
+                    let urls = request.urls
+                    appState.pendingRequest = nil
+                    Task {
+                        if urls.count == 1,
+                           let job = appState.jobs.first(where: { $0.id == TranscriptionJob.stableID(for: urls[0]) }) {
+                            await appState.transcribe(job: job, options: options)
+                        } else {
+                            await appState.transcribeBatch(urls: urls, options: options)
+                        }
+                    }
+                }
+            )
         }
         .alert("Something went wrong", isPresented: errorBinding) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(viewModel.errorMessage ?? "")
+            Text(appState.errorMessage ?? "")
         }
     }
 
-    private var sidebar: some View {
-        VStack(spacing: 0) {
-            HStack {
-                TextField("Search memos or transcripts", text: $viewModel.searchText)
-                    .textFieldStyle(.roundedBorder)
-
-                Button {
-                    Task { await viewModel.loadMemos() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(viewModel.isLoading)
-
-                Button {
-                    showingSettings = true
-                } label: {
-                    Label("Settings", systemImage: "gearshape")
-                }
-            }
-            .padding()
-
-            if viewModel.isLoading && viewModel.memos.isEmpty {
-                ProgressView("Loading Voice Memos…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if viewModel.memos.isEmpty {
-                ContentUnavailableView {
-                    Label("No Voice Memos", systemImage: "mic.slash")
-                } description: {
-                    Text("Record something in Voice Memos, grant Full Disk Access if needed, then refresh.")
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List(viewModel.filteredMemos, selection: $selectedMemoID) { memo in
-                    MemoRow(memo: memo, status: viewModel.status(for: memo))
-                        .tag(memo.id)
-                }
+    private var emptyState: some View {
+        VStack(spacing: 24) {
+            AudioDropZone(
+                title: "Drop recordings here",
+                subtitle: "Drag from Voice Memos, Finder, or any audio file"
+            ) { urls in
+                appState.receiveAudioFiles(urls)
             }
 
-            footer
-        }
-        .navigationTitle("Voice Memos")
-        .toolbar {
-            ToolbarItemGroup {
-                Button {
-                    Task { await viewModel.transcribePending() }
-                } label: {
-                    Label("Transcribe New", systemImage: "waveform.badge.plus")
-                }
-                .disabled(viewModel.pendingCount == 0 || viewModel.isTranscribing)
-            }
-        }
-    }
+            VStack(spacing: 8) {
+                Text("From Voice Memos")
+                    .font(.subheadline.weight(.semibold))
 
-    private var detailPane: some View {
-        Group {
-            if let memo = selectedMemo {
-                MemoDetailView(
-                    memo: memo,
-                    status: viewModel.status(for: memo),
-                    onTranscribe: {
-                        Task { await viewModel.transcribe(memo) }
-                    },
-                    onReveal: {
-                        viewModel.revealInFinder(memo)
-                    }
-                )
-            } else {
-                ContentUnavailableView(
-                    "Select a memo",
-                    systemImage: "sidebar.left",
-                    description: Text("Pick a recording to view its transcript.")
-                )
-            }
-        }
-    }
-
-    private var footer: some View {
-        HStack {
-            if viewModel.isTranscribing {
-                ProgressView()
-                    .controlSize(.small)
-                Text("Transcribing…")
-            } else {
-                Text("\(viewModel.memos.count) recordings")
-            }
-
-            Spacer()
-
-            if viewModel.pendingCount > 0 {
-                Text("\(viewModel.pendingCount) not transcribed")
+                Text("Drag a recording from the Voice Memos list and drop it here.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+
+                Button("Open Voice Memos") {
+                    NSWorkspace.shared.openApplication(
+                        at: URL(fileURLWithPath: "/System/Applications/VoiceMemos.app"),
+                        configuration: NSWorkspace.OpenConfiguration()
+                    )
+                }
+            }
+            .padding(.horizontal, 48)
+            .padding(.bottom, 8)
+        }
+    }
+
+    private func handleWindowDrop(_ providers: [NSItemProvider]) -> Bool {
+        Task {
+            let urls = await DroppedFileLoader.loadURLs(from: providers)
+            guard !urls.isEmpty else { return }
+            await MainActor.run {
+                appState.receiveAudioFiles(urls)
             }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(.bar)
+        return true
     }
 
     private var errorBinding: Binding<Bool> {
         Binding(
-            get: { viewModel.errorMessage != nil },
+            get: { appState.errorMessage != nil },
             set: { isPresented in
                 if !isPresented {
-                    viewModel.errorMessage = nil
+                    appState.errorMessage = nil
                 }
             }
         )
     }
 }
 
-private struct MemoRow: View {
-    let memo: VoiceMemo
-    let status: TranscriptionStatus
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(memo.title)
-                    .font(.headline)
-                    .lineLimit(1)
-
-                Spacer()
-
-                StatusBadge(status: status)
-            }
-
-            HStack(spacing: 8) {
-                Text(memo.formattedDate)
-                Text("•")
-                Text(memo.formattedDuration)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 2)
-    }
-}
-
-private struct StatusBadge: View {
-    let status: TranscriptionStatus
-
-    var body: some View {
-        switch status {
-        case .notStarted:
-            Label("New", systemImage: "circle")
-                .labelStyle(.iconOnly)
-                .foregroundStyle(.secondary)
-                .help("Not transcribed yet")
-        case .inProgress:
-            ProgressView()
-                .controlSize(.small)
-                .help("Transcribing")
-        case .completed:
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-                .help("Transcribed")
-        case .failed:
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-                .help("Transcription failed")
-        }
-    }
-}
-
-private struct MemoDetailView: View {
-    let memo: VoiceMemo
+private struct JobDetailView: View {
+    let job: TranscriptionJob
     let status: TranscriptionStatus
     let onTranscribe: () -> Void
     let onReveal: () -> Void
@@ -205,10 +150,10 @@ private struct MemoDetailView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(memo.title)
+                    Text(job.displayName)
                         .font(.title2.bold())
 
-                    Text("\(memo.formattedDate) · \(memo.formattedDuration)")
+                    Text(job.formattedDate)
                         .foregroundStyle(.secondary)
                 }
 
@@ -216,9 +161,7 @@ private struct MemoDetailView: View {
 
                 Button("Reveal in Finder", action: onReveal)
 
-                Button {
-                    onTranscribe()
-                } label: {
+                Button(action: onTranscribe) {
                     if case .inProgress = status {
                         ProgressView()
                             .controlSize(.small)
@@ -232,6 +175,7 @@ private struct MemoDetailView: View {
             Divider()
 
             transcriptContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -242,42 +186,49 @@ private struct MemoDetailView: View {
         switch status {
         case .notStarted:
             ContentUnavailableView(
-                "No transcript yet",
+                "Ready to transcribe",
                 systemImage: "text.bubble",
-                description: Text("Transcribe this memo with your local Whisper model.")
+                description: Text("Choose language and model, then run Whisper on this recording.")
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .inProgress:
             VStack(spacing: 12) {
                 ProgressView()
-                Text("Running whisper-cli on this recording…")
+                Text("Running whisper-cli…")
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .completed(let transcript):
-            ScrollView {
-                Text(transcript)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+        case .completed(let record):
+            VStack(alignment: .leading, spacing: 12) {
+                TranscriptionMetadataBanner(record: record)
 
-            HStack {
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(transcript, forType: .string)
-                } label: {
-                    Label("Copy transcript", systemImage: "doc.on.doc")
+                ScrollView {
+                    Text(record.text)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                ShareLink(item: transcript) {
-                    Label("Share", systemImage: "square.and.arrow.up")
+                HStack {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(record.text, forType: .string)
+                    } label: {
+                        Label("Copy transcript", systemImage: "doc.on.doc")
+                    }
+
+                    ShareLink(item: record.text) {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         case .failed(let message):
             ContentUnavailableView {
                 Label("Transcription failed", systemImage: "exclamationmark.triangle")
             } description: {
                 Text(message)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -297,6 +248,30 @@ private struct MemoDetailView: View {
             return true
         }
         return false
+    }
+}
+
+private struct TranscriptionMetadataBanner: View {
+    let record: TranscriptRecord
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "waveform.and.mic")
+                .foregroundStyle(.secondary)
+
+            Text(record.optionsSummary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            Text(record.createdAt, format: .dateTime.day().month().year().hour().minute())
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

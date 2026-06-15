@@ -26,17 +26,17 @@ enum WhisperTranscriberError: LocalizedError {
 struct WhisperTranscriber {
     private let audioConverter = AudioConverter()
 
-    func transcribe(audioURL: URL) async throws -> String {
+    func transcribe(audioURL: URL, options: TranscriptionOptions) async throws -> TranscriptRecord {
         let settings = AppSettings.shared
         let binaryURL = URL(fileURLWithPath: settings.whisperBinaryPath)
-        let modelURL = URL(fileURLWithPath: settings.modelPath)
+        let modelURL = URL(fileURLWithPath: options.modelPath)
 
         guard FileManager.default.fileExists(atPath: binaryURL.path) else {
             throw WhisperTranscriberError.missingBinary(settings.whisperBinaryPath)
         }
 
         guard FileManager.default.fileExists(atPath: modelURL.path) else {
-            throw WhisperTranscriberError.missingModel(settings.modelPath)
+            throw WhisperTranscriberError.missingModel(options.modelPath)
         }
 
         guard FileManager.default.fileExists(atPath: audioURL.path) else {
@@ -59,7 +59,7 @@ struct WhisperTranscriber {
         ]) { _, new in new }
         process.arguments = [
             "-m", modelURL.path,
-            "-l", settings.language,
+            "-l", options.language,
             "-otxt",
             "-np",
             "-nt",
@@ -91,7 +91,7 @@ struct WhisperTranscriber {
             )
         }
 
-        let transcript = try readTranscript(
+        let text = try readTranscript(
             stdout: stdout,
             outputBase: outputBase,
             preparedAudioURL: preparedAudioURL,
@@ -99,7 +99,14 @@ struct WhisperTranscriber {
             stderr: stderr
         )
 
-        return transcript
+        return TranscriptRecord(
+            text: text,
+            language: options.language,
+            modelPath: options.modelPath,
+            createdAt: Date(),
+            sourceURLString: nil,
+            sourceName: nil
+        )
     }
 
     private func readTranscript(

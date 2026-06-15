@@ -1,5 +1,7 @@
 .DS_Store
 .build/
+Resources/.AppIcon-work.png
+Resources/AppIcon.iconset/
 *.xcodeproj/
 DerivedData/
 *.app/
