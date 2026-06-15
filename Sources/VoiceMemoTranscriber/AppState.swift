@@ -8,9 +8,13 @@ final class AppState: ObservableObject {
     @Published private(set) var jobs: [TranscriptionJob] = []
     @Published var selectedJobID: String?
     @Published var pendingRequest: TranscriptionRequest?
+    @Published var summarizerRequest: SummarizerRequest?
+    @Published var isSummarizing = false
+    @Published var summarizerSuccessMessage: String?
     @Published var errorMessage: String?
 
     private let transcriber = WhisperTranscriber()
+    private let summarizer = MeetingSummarizerService()
     private let transcriptStore = TranscriptStore.shared
     private var isTranscribing = false
 
@@ -116,6 +120,40 @@ final class AppState: ObservableObject {
 
     func revealInFinder(_ job: TranscriptionJob) {
         NSWorkspace.shared.activateFileViewerSelecting([job.audioURL])
+    }
+
+    func sendToSummarizer(job: TranscriptionJob, record: TranscriptRecord, options: SummarizerOptions) async {
+        guard !isSummarizing else { return }
+
+        isSummarizing = true
+        errorMessage = nil
+        summarizerSuccessMessage = nil
+
+        let settings = AppSettings.shared
+        let repoRoot = URL(fileURLWithPath: settings.summarizerRepoPath, isDirectory: true)
+
+        do {
+            let exported = try summarizer.exportTranscript(
+                text: record.text,
+                createdAt: record.createdAt,
+                sourceName: record.sourceName ?? job.displayName,
+                repoRoot: repoRoot
+            )
+
+            try await summarizer.runPipeline(
+                searchTerm: exported.searchTerm,
+                options: options,
+                repoRoot: repoRoot,
+                denoPath: settings.denoBinaryPath
+            )
+
+            summarizerSuccessMessage =
+                "Summary created for “\(exported.fileURL.lastPathComponent)”. Check Notion or your notification."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+
+        isSummarizing = false
     }
 
     private func updateJobStatus(id: String, status: TranscriptionStatus) {

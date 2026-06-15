@@ -29,6 +29,10 @@ open dist/Voice\ Memo\ Transcriber.app
 
 Supports M4A, MP3, WAV, FLAC, OGG, and more.
 
+**Summarize to Notion**
+
+After transcribing, click **Summarize** to export the transcript into [meeting-summaries-to-notion](~/Repos/meeting-summaries-to-notion) and run its OpenRouter → Notion pipeline. Choose meeting notes or project updates and the summary language in the sheet.
+
 ## Development with Xcode
 
 ```bash
@@ -45,5 +49,8 @@ Press **⌘R** to build and run. For the `.app` bundle:
 
 - Whisper binary path (default: `/opt/homebrew/bin/whisper-cli`)
 - Default model path (default: `~/whisper-models/ggml-medium.bin`)
+- Meeting summaries repo (default: `~/Repos/meeting-summaries-to-notion`)
+- Deno binary (default: `/opt/homebrew/bin/deno`)
+- Default summarizer pipeline (meeting notes or project updates)
 
 Transcripts are saved in `~/Library/Application Support/VoiceMemoTranscriber/transcripts/`.

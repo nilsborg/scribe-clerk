@@ -2,6 +2,7 @@
 .build/
 Resources/.AppIcon-work.png
 Resources/AppIcon.iconset/
+Resources/Assets.xcassets/AppIcon.appiconset/*.png
 *.xcodeproj/
 DerivedData/
 *.app/

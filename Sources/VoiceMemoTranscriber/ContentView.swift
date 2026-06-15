@@ -16,6 +16,7 @@ struct ContentView: View {
                 JobDetailView(
                     job: job,
                     status: appState.status(for: job),
+                    isSummarizing: appState.isSummarizing,
                     onTranscribe: {
                         appState.pendingRequest = .files(
                             [job.audioURL],
@@ -24,6 +25,9 @@ struct ContentView: View {
                     },
                     onReveal: {
                         appState.revealInFinder(job)
+                    },
+                    onSummarize: { record in
+                        appState.summarizerRequest = SummarizerRequest(job: job, record: record)
                     }
                 )
             } else {
@@ -80,10 +84,29 @@ struct ContentView: View {
                 }
             )
         }
+        .sheet(item: $appState.summarizerRequest) { request in
+            SummarizerOptionsView(
+                request: request,
+                onCancel: { appState.summarizerRequest = nil },
+                onStart: { options in
+                    let job = request.job
+                    let record = request.record
+                    appState.summarizerRequest = nil
+                    Task {
+                        await appState.sendToSummarizer(job: job, record: record, options: options)
+                    }
+                }
+            )
+        }
         .alert("Something went wrong", isPresented: errorBinding) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(appState.errorMessage ?? "")
+        }
+        .alert("Summary sent", isPresented: summarizerSuccessBinding) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(appState.summarizerSuccessMessage ?? "")
         }
     }
 
@@ -138,13 +161,26 @@ struct ContentView: View {
             }
         )
     }
+
+    private var summarizerSuccessBinding: Binding<Bool> {
+        Binding(
+            get: { appState.summarizerSuccessMessage != nil },
+            set: { isPresented in
+                if !isPresented {
+                    appState.summarizerSuccessMessage = nil
+                }
+            }
+        )
+    }
 }
 
 private struct JobDetailView: View {
     let job: TranscriptionJob
     let status: TranscriptionStatus
+    let isSummarizing: Bool
     let onTranscribe: () -> Void
     let onReveal: () -> Void
+    let onSummarize: (TranscriptRecord) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -210,15 +246,29 @@ private struct JobDetailView: View {
 
                 HStack {
                     Button {
+                        onSummarize(record)
+                    } label: {
+                        if isSummarizing {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("Summarize", systemImage: "text.append")
+                        }
+                    }
+                    .disabled(isSummarizing)
+
+                    Button {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(record.text, forType: .string)
                     } label: {
                         Label("Copy transcript", systemImage: "doc.on.doc")
                     }
+                    .disabled(isSummarizing)
 
                     ShareLink(item: record.text) {
                         Label("Share", systemImage: "square.and.arrow.up")
                     }
+                    .disabled(isSummarizing)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
