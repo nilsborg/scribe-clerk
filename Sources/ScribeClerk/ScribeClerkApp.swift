@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct VoiceMemoTranscriberApp: App {
+struct ScribeClerkApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {

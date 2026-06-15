@@ -1,6 +1,6 @@
-# Voice Memo Transcriber
+# Scribe Clerk
 
-Transcribe audio locally with [whisper.cpp](https://github.com/ggerganov/whisper.cpp) — no cloud, no special permissions.
+Transcribe audio locally with [whisper.cpp](https://github.com/ggerganov/whisper.cpp), then optionally summarize transcripts through your Notion pipeline — no cloud transcription, no special permissions.
 
 ## Requirements
 
@@ -11,21 +11,20 @@ Transcribe audio locally with [whisper.cpp](https://github.com/ggerganov/whisper
 ## Build
 
 ```bash
-cd ~/repos/voice-memo-transcriber
+cd ~/Repos/voice-memo-transcriber
 ./scripts/build-app.sh
-open dist/Voice\ Memo\ Transcriber.app
+open dist/Scribe\ Clerk.app
 ```
 
 ## How to use
 
-**From Voice Memos**
-1. Open Voice Memos and this app side by side
-2. Drag a recording from the Voice Memos list onto the app window
-3. Choose language and model, then transcribe
+**Drop audio**
+1. Drop one or many files onto the window (Finder, Voice Memos, etc.)
+2. Choose language and model, then transcribe
 
 **Other ways**
-- Drop any audio file onto the window (Finder, etc.)
-- Click **+** in the toolbar to pick files
+- Drag from Voice Memos into the window
+- Click **+** in the sidebar to pick files
 
 Supports M4A, MP3, WAV, FLAC, OGG, and more.
 
@@ -53,4 +52,6 @@ Press **⌘R** to build and run. For the `.app` bundle:
 - Deno binary (default: `/opt/homebrew/bin/deno`)
 - Default summarizer pipeline (meeting notes or project updates)
 
-Transcripts are saved in `~/Library/Application Support/VoiceMemoTranscriber/transcripts/`.
+Transcripts are saved in `~/Library/Application Support/ScribeClerk/transcripts/`.
+
+If you used the previous **Voice Memo Transcriber** build, existing transcripts are migrated automatically on first launch.

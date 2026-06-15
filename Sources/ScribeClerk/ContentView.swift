@@ -112,8 +112,8 @@ struct ContentView: View {
     private var emptyState: some View {
         VStack(spacing: 24) {
             AudioDropZone(
-                title: "Drop recordings here",
-                subtitle: "Drop one or many files — they’ll queue up and transcribe in order"
+                title: "Drop audio here",
+                subtitle: "Transcribe locally, then summarize to Notion when you’re ready"
             ) { urls in
                 appState.receiveAudioFiles(urls)
             }

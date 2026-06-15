@@ -26,7 +26,7 @@ struct SettingsView: View {
             }
 
             Section("How to use") {
-                Text("Drag recordings from Voice Memos into the app window, transcribe, then use Summarize to send the transcript to meeting-summaries-to-notion.")
+                Text("Drop audio into the window to transcribe locally with Whisper. Use Summarize to export transcripts into meeting-summaries-to-notion and run the Notion pipeline.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

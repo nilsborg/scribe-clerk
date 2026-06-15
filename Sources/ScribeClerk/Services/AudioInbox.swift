@@ -2,10 +2,7 @@ import Foundation
 
 enum AudioInbox {
     private static var directory: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let inbox = appSupport.appendingPathComponent("VoiceMemoTranscriber/inbox", isDirectory: true)
-        try? FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
-        return inbox
+        AppSupportPaths.directory(named: "inbox")
     }
 
     /// Copies dragged files into app storage so they remain readable after the drag session ends.

@@ -58,7 +58,7 @@ final class WhisperTranscriber {
         }
 
         let workDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("voice-memo-transcriber-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("scribe-clerk-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: workDirectory) }
 

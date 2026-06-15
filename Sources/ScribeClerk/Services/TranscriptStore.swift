@@ -8,9 +8,7 @@ struct TranscriptStore {
     private let decoder: JSONDecoder
 
     init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        rootDirectory = appSupport.appendingPathComponent("VoiceMemoTranscriber/transcripts", isDirectory: true)
-        try? FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
+        rootDirectory = AppSupportPaths.directory(named: "transcripts")
 
         encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

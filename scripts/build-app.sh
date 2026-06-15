@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="Voice Memo Transcriber"
+APP_NAME="Scribe Clerk"
 BUILD_DIR="$ROOT/.build/release"
 APP_DIR="$ROOT/dist/$APP_NAME.app"
 INFO_PLIST="$ROOT/Resources/Info.plist"
@@ -20,7 +20,7 @@ fi
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 
-cp "$BUILD_DIR/VoiceMemoTranscriber" "$APP_DIR/Contents/MacOS/VoiceMemoTranscriber"
+cp "$BUILD_DIR/ScribeClerk" "$APP_DIR/Contents/MacOS/ScribeClerk"
 cp "$INFO_PLIST" "$APP_DIR/Contents/Info.plist"
 cp "$ICON_SRC" "$APP_DIR/Contents/Resources/AppIcon.icns"
 printf 'APPL????' > "$APP_DIR/Contents/PkgInfo"

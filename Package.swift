@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "VoiceMemoTranscriber",
+    name: "ScribeClerk",
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
-            name: "VoiceMemoTranscriber",
-            path: "Sources/VoiceMemoTranscriber"
+            name: "ScribeClerk",
+            path: "Sources/ScribeClerk"
         )
     ]
 )

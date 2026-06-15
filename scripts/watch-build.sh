@@ -20,7 +20,7 @@ fswatch -o Sources Package.swift scripts/build-app.sh | while read -r _; do
   echo ""
   echo "── Change detected at $(date +%H:%M:%S) ──"
   if ./scripts/build-app.sh; then
-    echo "✓ Rebuilt dist/Voice Memo Transcriber.app"
+    echo "✓ Rebuilt dist/Scribe Clerk.app"
   else
     echo "✗ Build failed"
   fi

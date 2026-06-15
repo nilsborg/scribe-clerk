@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 struct AudioDropZone: View {
     var title: String = "Drop audio files here"
-    var subtitle: String = "Drag recordings from Voice Memos, or any audio file"
+    var subtitle: String = "Transcribe locally with Whisper — any audio file"
     var inset: CGFloat = 32
     var onFiles: ([URL]) -> Void
 
