@@ -6,3 +6,6 @@ Resources/Assets.xcassets/AppIcon.appiconset/*.png
 *.xcodeproj/
 DerivedData/
 *.app/
+Adapters/MeetingSummariesToNotion/.env
+Adapters/MeetingSummariesToNotion/generated_summaries/
+Adapters/MeetingSummariesToNotion/processed_files.json

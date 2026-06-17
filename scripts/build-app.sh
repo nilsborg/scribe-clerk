@@ -49,3 +49,8 @@ xattr -cr "$APP_DIR" 2>/dev/null || true
 "$LSREGISTER" -f -R -trusted "$APP_DIR" >/dev/null 2>&1 || true
 
 echo "Built $APP_DIR (CFBundleVersion $BUILD_NUMBER)"
+
+ADAPTER_DEST="$APP_DIR/Contents/Resources/Adapters/MeetingSummariesToNotion"
+mkdir -p "$ADAPTER_DEST"
+rsync -a --exclude='generated_summaries' --exclude='processed_files.json' --exclude='.env' \
+  "$ROOT/Adapters/MeetingSummariesToNotion/" "$ADAPTER_DEST/"
