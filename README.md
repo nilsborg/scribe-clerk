@@ -1,57 +1,62 @@
 # Scribe Clerk
 
-Transcribe audio locally with [whisper.cpp](https://github.com/ggerganov/whisper.cpp), then optionally summarize transcripts through your Notion pipeline — no cloud transcription, no special permissions.
+Transcribe audio locally with [whisper.cpp](https://github.com/ggerganov/whisper.cpp), keep a managed recording library, generate editable summaries, and publish to Notion.
 
 ## Requirements
 
 - macOS 14+
 - `whisper-cli` (Homebrew: `brew install whisper-cpp`)
+- `deno` (Homebrew: `brew install deno`)
 - GGML models in `~/whisper-models/` (defaults to `ggml-medium.bin`)
+- Adapter `.env` with OpenRouter and Notion credentials (see `Adapters/MeetingSummariesToNotion/.env.example`)
 
 ## Build
 
 ```bash
 cd ~/Repos/scribe-clerk
+cp Adapters/MeetingSummariesToNotion/.env.example Adapters/MeetingSummariesToNotion/.env
 ./scripts/build-app.sh
 open dist/Scribe\ Clerk.app
 ```
 
-## How to use
+## Workflow
 
-**Drop audio**
-1. Drop one or many files onto the window (Finder, Voice Memos, etc.)
-2. Choose language and model, then transcribe
+1. **Add** audio via drag & drop, file picker, or the inbox folder
+2. **Import** from the inbox into your library
+2. **Transcribe** with Whisper (auto-detect language by default)
+3. **Summarize** into editable markdown (meeting notes or project updates, English or German)
+4. **Publish** to Notion when ready (summary page + linked transcript sub-page)
 
-**Other ways**
-- Drag from Voice Memos into the window
-- Click **+** in the sidebar to pick files
+### Inbox
 
-Supports M4A, MP3, WAV, FLAC, OGG, and more.
+Drop files in the app or point external tools (e.g. Audio Hijack) at:
 
-**Summarize to Notion**
+`~/Library/Application Support/ScribeClerk/inbox/`
 
-After transcribing, click **Summarize** to export the transcript into [meeting-summaries-to-notion](~/Repos/meeting-summaries-to-notion) and run its OpenRouter → Notion pipeline. Choose meeting notes or project updates and the summary language in the sheet.
+Recordings appear in the Inbox section. Click **Import** to move them into the managed library.
 
-## Development with Xcode
+### Voice Memos
+
+Drag recordings from Voice Memos into the app window.
+
+## Library layout
+
+`~/Library/Application Support/ScribeClerk/`
+
+- `inbox/` — staging area for new recordings
+- `recordings/{id}/` — managed audio, transcript, summaries, and metadata
+
+## Development
 
 ```bash
 ./scripts/open-xcode.sh
 ```
 
-Press **⌘R** to build and run. For the `.app` bundle:
-
-```bash
-./scripts/build-app.sh
-```
+Press **⌘R** to build and run.
 
 ## Settings (⌘,)
 
-- Whisper binary path (default: `/opt/homebrew/bin/whisper-cli`)
-- Default model path (default: `~/whisper-models/ggml-medium.bin`)
-- Meeting summaries repo (default: `~/Repos/meeting-summaries-to-notion`)
-- Deno binary (default: `/opt/homebrew/bin/deno`)
-- Default summarizer pipeline (meeting notes or project updates)
-
-Transcripts are saved in `~/Library/Application Support/ScribeClerk/transcripts/`.
-
-If you used the previous **Voice Memo Transcriber** build, existing transcripts are migrated automatically on first launch.
+- Whisper binary and default model
+- Deno binary path
+- Adapter `.env` file path
+- Default summarizer pipeline
