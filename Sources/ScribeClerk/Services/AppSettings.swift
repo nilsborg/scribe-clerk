@@ -8,12 +8,12 @@ final class AppSettings {
     private enum Keys {
         static let whisperBinaryPath = "whisperBinaryPath"
         static let defaultModelPath = "defaultModelPath"
-        static let summarizerRepoPath = "summarizerRepoPath"
         static let denoBinaryPath = "denoBinaryPath"
+        static let adapterEnvPath = "adapterEnvPath"
         static let defaultSummarizerFlow = "defaultSummarizerFlow"
+        static let legacySummarizerRepoPath = "summarizerRepoPath"
     }
 
-    static let defaultSummarizerRepoPath = "/Users/nilsborg/Repos/meeting-summaries-to-notion"
     static let defaultDenoBinaryPath = "/opt/homebrew/bin/deno"
 
     var whisperBinaryPath: String {
@@ -44,21 +44,31 @@ final class AppSettings {
         }
     }
 
-    var summarizerRepoPath: String {
-        get {
-            defaults.string(forKey: Keys.summarizerRepoPath) ?? Self.defaultSummarizerRepoPath
-        }
-        set {
-            defaults.set(newValue, forKey: Keys.summarizerRepoPath)
-        }
-    }
-
     var denoBinaryPath: String {
         get {
             defaults.string(forKey: Keys.denoBinaryPath) ?? Self.defaultDenoBinaryPath
         }
         set {
             defaults.set(newValue, forKey: Keys.denoBinaryPath)
+        }
+    }
+
+    var adapterEnvPath: String {
+        get {
+            if let value = defaults.string(forKey: Keys.adapterEnvPath),
+               FileManager.default.fileExists(atPath: value) {
+                return value
+            }
+
+            let repoEnv = AdapterPaths.envFileURL
+            if FileManager.default.fileExists(atPath: repoEnv.path) {
+                return repoEnv.path
+            }
+
+            return AppSupportPaths.adapterEnvURL.path
+        }
+        set {
+            defaults.set(newValue, forKey: Keys.adapterEnvPath)
         }
     }
 
@@ -73,13 +83,6 @@ final class AppSettings {
         set {
             defaults.set(newValue.rawValue, forKey: Keys.defaultSummarizerFlow)
         }
-    }
-
-    func defaultSummarizerOptions(for record: TranscriptRecord) -> SummarizerOptions {
-        SummarizerOptions(
-            flow: defaultSummarizerFlow,
-            language: SummarizerLanguage.defaultFor(transcriptLanguage: record.language)
-        )
     }
 
     func defaultTranscriptionOptions() -> TranscriptionOptions {

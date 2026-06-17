@@ -5,6 +5,27 @@ enum AudioInbox {
         AppSupportPaths.directory(named: "inbox")
     }
 
+    /// Ensures the file lives in the inbox folder, copying when needed.
+    static func add(_ url: URL) -> URL {
+        let inboxDir = directory.standardizedFileURL
+        if url.deletingLastPathComponent().standardizedFileURL == inboxDir {
+            return url
+        }
+
+        let destination = directory.appendingPathComponent(url.lastPathComponent)
+        let uniqueDestination = uniqueURL(for: destination)
+
+        do {
+            if FileManager.default.fileExists(atPath: uniqueDestination.path) {
+                try FileManager.default.removeItem(at: uniqueDestination)
+            }
+            try FileManager.default.copyItem(at: url, to: uniqueDestination)
+            return uniqueDestination
+        } catch {
+            return persist(url)
+        }
+    }
+
     /// Copies dragged files into app storage so they remain readable after the drag session ends.
     static func persist(_ url: URL) -> URL {
         guard shouldCopy(url) else { return url }
