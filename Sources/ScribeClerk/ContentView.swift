@@ -14,7 +14,10 @@ struct ContentView: View {
             .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 360)
         } detail: {
             Group {
-                if let recording = appState.selectedRecording {
+                let selected = appState.selectedRecordings
+                if selected.count > 1 {
+                    MultiSelectionView(recordings: selected, appState: appState)
+                } else if let recording = appState.selectedRecording {
                     RecordingDetailView(recording: recording, appState: appState)
                 } else {
                     emptyState

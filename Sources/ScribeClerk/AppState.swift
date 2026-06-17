@@ -79,6 +79,10 @@ final class AppState: ObservableObject {
         inboxItems.filter { sidebarSelection.contains($0.id) }
     }
 
+    var selectedRecordings: [RecordingRecord] {
+        recordings.filter { sidebarSelection.contains($0.id) }
+    }
+
     var selectedRecording: RecordingRecord? {
         guard let selectedRecordingID else { return nil }
         return recordings.first { $0.id == selectedRecordingID }
@@ -295,6 +299,14 @@ final class AppState: ObservableObject {
 
         summaryQueue.append(QueuedSummaryItem(recordingID: recordingID, options: options, regenerate: regenerate))
         pendingSummaryCount = summaryQueue.count
+
+        updateRecording(recordingID) { record in
+            var variant = record.variant(for: options) ?? SummaryVariantRecord.make(options: options)
+            variant.status = .queued
+            variant.errorMessage = nil
+            record.upsertVariant(variant)
+        }
+
         startSummaryProcessorIfNeeded()
     }
 
@@ -365,7 +377,10 @@ final class AppState: ObservableObject {
               record.transcriptionStatus != .inProgress,
               record.transcriptionStatus != .queued,
               activeSummaryRecordingID != recordingID,
-              activePublishRecordingID != recordingID else { return }
+              activePublishRecordingID != recordingID,
+              !record.summaryVariants.contains(where: {
+                  $0.status == .queued || $0.status == .generating || $0.status == .publishing
+              }) else { return }
 
         transcriptionQueue.removeAll { $0.recordingID == recordingID }
         summaryQueue.removeAll { $0.recordingID == recordingID }
@@ -377,6 +392,22 @@ final class AppState: ObservableObject {
             selectRecording(recordings.first?.id)
         }
         sidebarSelection.remove(recordingID)
+    }
+
+    func transcribeRecordings(_ recordingIDs: [String]) {
+        let options = AppSettings.shared.defaultTranscriptionOptions()
+        for id in recordingIDs {
+            guard let record = recordings.first(where: { $0.id == id }),
+                  record.transcriptionStatus != .inProgress,
+                  record.transcriptionStatus != .queued else { continue }
+            enqueueTranscription(recordingID: id, options: options)
+        }
+    }
+
+    func deleteRecordings(_ recordingIDs: [String]) {
+        for id in recordingIDs {
+            deleteRecording(id)
+        }
     }
 
     func stopAllQueues() {
@@ -406,6 +437,7 @@ final class AppState: ObservableObject {
         summaryQueue.removeAll()
         pendingSummaryCount = 0
         activeSummaryRecordingID = nil
+        resetSummaryStatuses()
     }
 
     func stopPublishQueue() {
@@ -675,6 +707,12 @@ final class AppState: ObservableObject {
 
             activeSummaryRecordingID = nil
         }
+
+        if Task.isCancelled || stopSummaryRequested {
+            summaryQueue.removeAll()
+            pendingSummaryCount = 0
+            resetSummaryStatuses()
+        }
     }
 
     private func runPublishProcessor() async {
@@ -735,6 +773,31 @@ final class AppState: ObservableObject {
             default:
                 break
             }
+        }
+    }
+
+    private func resetSummaryStatuses() {
+        for index in recordings.indices {
+            var record = recordings[index]
+            let hadActiveSummaryJob = record.summaryVariants.contains {
+                $0.status == .queued || $0.status == .generating
+            }
+            guard hadActiveSummaryJob else { continue }
+
+            record.summaryVariants = record.summaryVariants.compactMap { variant in
+                guard variant.status == .queued || variant.status == .generating else {
+                    return variant
+                }
+                if variant.markdownFileName != nil {
+                    var updated = variant
+                    updated.status = .stale
+                    return updated
+                }
+                return nil
+            }
+
+            try? store.save(record)
+            recordings[index] = record
         }
     }
 }

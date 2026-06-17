@@ -27,6 +27,7 @@ enum RecordingTranscriptionStatus: String, Codable {
 
 enum SummaryVariantStatus: String, Codable {
     case notStarted
+    case queued
     case generating
     case ready
     case publishing

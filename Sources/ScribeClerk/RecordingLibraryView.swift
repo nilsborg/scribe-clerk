@@ -6,12 +6,6 @@ struct RecordingLibraryView: View {
 
     var body: some View {
         List(selection: $appState.sidebarSelection) {
-            if appState.isTranscriptionActive || appState.isSummaryActive || appState.isPublishActive {
-                Section {
-                    ActiveJobsBanner(appState: appState)
-                }
-            }
-
             if !appState.inboxItems.isEmpty {
                 Section("Inbox") {
                     ForEach(appState.inboxItems) { item in
@@ -48,7 +42,7 @@ struct RecordingLibraryView: View {
                     .listRowBackground(Color.clear)
                 } else {
                     ForEach(appState.filteredRecordings) { recording in
-                        RecordingSidebarRow(recording: recording)
+                        RecordingSidebarRow(recording: recording, appState: appState)
                             .tag(recording.id)
                     }
                 }
@@ -106,58 +100,6 @@ struct RecordingLibraryView: View {
     }
 }
 
-private struct ActiveJobsBanner: View {
-    @ObservedObject var appState: AppState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if appState.isTranscriptionActive {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(appState.transcriptionProgressLabel(for: appState.activeTranscriptionRecordingID ?? ""))
-                        Spacer()
-                        Button("Stop", role: .destructive) {
-                            appState.stopTranscriptionQueue()
-                        }
-                        .controlSize(.small)
-                    }
-
-                    if let progress = appState.transcriptionProgress {
-                        ProgressView(value: progress)
-                            .progressViewStyle(.linear)
-                    } else {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-                }
-            }
-            if appState.isSummaryActive {
-                HStack {
-                    ProgressView().controlSize(.small)
-                    Text("Summarizing…")
-                    Spacer()
-                    Button("Stop", role: .destructive) {
-                        appState.stopSummaryQueue()
-                    }
-                    .controlSize(.small)
-                }
-            }
-            if appState.isPublishActive {
-                HStack {
-                    ProgressView().controlSize(.small)
-                    Text("Publishing…")
-                    Spacer()
-                    Button("Stop", role: .destructive) {
-                        appState.stopPublishQueue()
-                    }
-                    .controlSize(.small)
-                }
-            }
-        }
-        .font(.caption)
-    }
-}
-
 private struct InboxRow: View {
     let item: InboxItem
     @ObservedObject var appState: AppState
@@ -212,15 +154,21 @@ private struct InboxRow: View {
 
 private struct RecordingSidebarRow: View {
     let recording: RecordingRecord
+    @ObservedObject var appState: AppState
 
     private var audioURL: URL {
         RecordingStore.shared.audioURL(for: recording)
     }
 
+    private var status: RecordingStatusDescriptor {
+        RecordingStatusDescriptor(recording: recording, appState: appState)
+    }
+
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: statusIcon)
-                .foregroundStyle(statusColor)
+            Image(systemName: status.icon)
+                .foregroundStyle(status.color)
+                .symbolEffect(.pulse, options: .repeating, isActive: status.isActive)
                 .frame(width: 16)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -236,61 +184,10 @@ private struct RecordingSidebarRow: View {
     }
 
     private var subtitle: String {
-        var parts = [statusLabel]
+        var parts = [status.label]
         if let duration = recording.resolvedAudioDuration(from: audioURL) {
             parts.append(duration)
         }
         return parts.joined(separator: " · ")
-    }
-
-    private var statusLabel: String {
-        if let published = recording.summaryVariants.first(where: { $0.status == .published }) {
-            return "Published · \(published.options.flow.label)"
-        }
-        if recording.summaryVariants.contains(where: { $0.status == .ready || $0.status == .stale }) {
-            return "Summarized"
-        }
-        switch recording.transcriptionStatus {
-        case .completed:
-            return "Transcribed"
-        case .failed:
-            return "Transcription failed"
-        case .inProgress:
-            return "Transcribing…"
-        case .queued:
-            return "Queued"
-        case .notStarted:
-            return recording.source.label
-        }
-    }
-
-    private var statusIcon: String {
-        switch recording.transcriptionStatus {
-        case .completed:
-            return recording.summaryVariants.contains(where: { $0.status == .published })
-                ? "paperplane.circle.fill"
-                : "checkmark.circle.fill"
-        case .failed:
-            return "exclamationmark.triangle.fill"
-        case .inProgress:
-            return "waveform"
-        case .queued:
-            return "clock"
-        case .notStarted:
-            return "tray.and.arrow.down"
-        }
-    }
-
-    private var statusColor: Color {
-        switch recording.transcriptionStatus {
-        case .completed:
-            return .green
-        case .failed:
-            return .red
-        case .inProgress, .queued:
-            return .accentColor
-        case .notStarted:
-            return .secondary
-        }
     }
 }
