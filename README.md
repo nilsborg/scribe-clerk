@@ -11,7 +11,7 @@ Transcribe audio locally with [whisper.cpp](https://github.com/ggerganov/whisper
 ## Build
 
 ```bash
-cd ~/Repos/voice-memo-transcriber
+cd ~/Repos/scribe-clerk
 ./scripts/build-app.sh
 open dist/Scribe\ Clerk.app
 ```
