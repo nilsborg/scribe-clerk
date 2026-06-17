@@ -4,23 +4,23 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppSupportPaths.migrateLegacyDataIfNeeded()
-        AppState.shared.loadHistory()
+        AppState.shared.loadLibrary()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard AppState.shared.isQueueActive else {
+        guard AppState.shared.isAnyJobActive else {
             return .terminateNow
         }
 
         let alert = NSAlert()
-        alert.messageText = "Transcription in progress"
-        alert.informativeText = AppState.shared.transcriptionQuitWarningMessage
+        alert.messageText = "Jobs in progress"
+        alert.informativeText = AppState.shared.quitWarningMessage
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Keep Running")
         alert.addButton(withTitle: "Quit Anyway")
 
         if alert.runModal() == .alertSecondButtonReturn {
-            AppState.shared.stopQueue()
+            AppState.shared.stopAllQueues()
             return .terminateNow
         }
 

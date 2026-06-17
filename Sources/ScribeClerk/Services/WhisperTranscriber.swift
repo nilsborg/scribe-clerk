@@ -76,6 +76,7 @@ final class WhisperTranscriber {
             "-l", options.language,
             "-otxt",
             "-np",
+            "-pp",
             "-nt",
             "-of", outputBase.path,
             preparedAudioURL.path

@@ -3,65 +3,34 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @ObservedObject private var appState = AppState.shared
+    @Environment(\.openWindow) private var openWindow
     @State private var showFileImporter = false
-
-    private var selectedJob: TranscriptionJob? {
-        guard let detailJobID = appState.detailJobID else { return nil }
-        return appState.jobs.first { $0.id == detailJobID }
-    }
 
     var body: some View {
         NavigationSplitView {
-            JobSidebarView(appState: appState) {
+            RecordingLibraryView(appState: appState) {
                 showFileImporter = true
             }
-            .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 340)
+            .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 360)
         } detail: {
             Group {
-                if let job = selectedJob {
-                    JobDetailView(
-                        job: job,
-                        status: appState.status(for: job),
-                        isSummarizing: appState.isSummarizerQueueActive
-                            || appState.activeSummarizerJobID == job.id,
-                        onTranscribe: {
-                            appState.pendingRequest = .files(
-                                [job.audioURL],
-                                title: "Transcribe “\(job.displayName)”"
-                            )
-                        },
-                        onReveal: {
-                            appState.revealInFinder(job)
-                        },
-                        onSummarize: { _ in
-                            appState.beginSummarize(jobIDs: [job.id])
-                        }
-                    )
+                if let recording = appState.selectedRecording {
+                    RecordingDetailView(recording: recording, appState: appState)
                 } else {
                     emptyState
                 }
             }
-            .frame(minWidth: 480, minHeight: 520)
+            .frame(minWidth: 520, minHeight: 560)
             .onDrop(of: AudioDropTypes.accepted, isTargeted: nil, perform: handleWindowDrop)
         }
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button {
-                    appState.isWhisperLogPanelVisible.toggle()
+                    openWindow(id: WhisperLogWindow.id)
                 } label: {
-                    Label("Whisper Log", systemImage: "terminal")
+                    Label("Whisper Output", systemImage: "terminal")
                 }
-                .help("Show live whisper-cli output")
-            }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if appState.isWhisperLogPanelVisible {
-                WhisperLogPanel(
-                    text: appState.whisperLogText,
-                    isRunning: appState.isQueueActive,
-                    onClear: appState.clearWhisperLog,
-                    onClose: { appState.isWhisperLogPanelVisible = false }
-                )
+                .help("Open whisper-cli console output")
             }
         }
         .fileImporter(
@@ -70,72 +39,86 @@ struct ContentView: View {
             allowsMultipleSelection: true
         ) { result in
             if case .success(let urls) = result {
-                appState.receiveAudioFiles(urls)
+                appState.addFilesToInbox(urls)
             }
         }
-        .sheet(item: $appState.pendingRequest) { request in
+        .sheet(item: $appState.pendingTranscriptionRequest) { request in
             TranscriptionOptionsView(
                 request: request,
-                queueIsActive: appState.isQueueActive,
-                pendingQueueCount: appState.pendingQueueCount,
-                onCancel: { appState.pendingRequest = nil },
+                queueIsActive: appState.isTranscriptionActive,
+                pendingQueueCount: appState.pendingTranscriptionCount,
+                onCancel: { appState.pendingTranscriptionRequest = nil },
                 onStart: { options in
-                    let urls = request.urls
-                    appState.pendingRequest = nil
-                    appState.enqueueTranscriptions(urls: urls, options: options)
+                    appState.pendingTranscriptionRequest = nil
+                    if let recordingID = recordingID(for: request.urls.first) {
+                        appState.enqueueTranscription(recordingID: recordingID, options: options)
+                    }
                 }
             )
         }
-        .sheet(item: $appState.summarizerRequest) { request in
-            SummarizerOptionsView(
-                request: request,
-                queueIsActive: appState.isSummarizerQueueActive,
-                onCancel: { appState.summarizerRequest = nil },
+        .sheet(item: $appState.summaryRequest) { request in
+            SummaryOptionsView(
+                recording: appState.recordings.first { $0.id == request.recordingID },
+                regenerate: request.regenerate,
+                queueIsActive: appState.isSummaryActive,
+                onCancel: { appState.summaryRequest = nil },
                 onStart: { options in
-                    appState.summarizerRequest = nil
-                    appState.enqueueSummarizations(items: request.items, options: options)
+                    appState.summaryRequest = nil
+                    appState.enqueueSummary(
+                        recordingID: request.recordingID,
+                        options: options,
+                        regenerate: request.regenerate
+                    )
                 }
             )
+        }
+        .sheet(item: $appState.publishRequest) { request in
+            PublishConfirmationView(
+                recording: appState.recordings.first { $0.id == request.recordingID },
+                variantID: request.variantID,
+                onCancel: { appState.publishRequest = nil },
+                onPublish: {
+                    appState.publishRequest = nil
+                    appState.enqueuePublish(recordingID: request.recordingID, variantID: request.variantID)
+                }
+            )
+        }
+        .alert("Duplicate recording", isPresented: duplicateBinding) {
+            Button("Open Existing", role: .cancel) {
+                appState.confirmDuplicateImport(createAnyway: false)
+            }
+            Button("Import Anyway") {
+                appState.confirmDuplicateImport(createAnyway: true)
+            }
+        } message: {
+            if let prompt = appState.duplicateImportPrompt {
+                Text("“\(prompt.existing.title)” already exists in your library.")
+            }
         }
         .alert("Something went wrong", isPresented: errorBinding) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(appState.errorMessage ?? "")
         }
-        .alert("Summary sent", isPresented: summarizerSuccessBinding) {
+        .alert("Success", isPresented: successBinding) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(appState.summarizerSuccessMessage ?? "")
+            Text(appState.successMessage ?? "")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            appState.refreshInbox()
+            if let selectedID = appState.selectedRecordingID {
+                appState.reloadTranscript(for: selectedID)
+            }
         }
     }
 
     private var emptyState: some View {
-        VStack(spacing: 24) {
-            AudioDropZone(
-                title: "Drop audio here",
-                subtitle: "Transcribe locally, then summarize to Notion when you’re ready"
-            ) { urls in
-                appState.receiveAudioFiles(urls)
-            }
-
-            VStack(spacing: 8) {
-                Text("From Voice Memos")
-                    .font(.subheadline.weight(.semibold))
-
-                Text("Drag a recording from the Voice Memos list and drop it here.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-
-                Button("Open Voice Memos") {
-                    NSWorkspace.shared.openApplication(
-                        at: URL(fileURLWithPath: "/System/Applications/VoiceMemos.app"),
-                        configuration: NSWorkspace.OpenConfiguration()
-                    )
-                }
-            }
-            .padding(.horizontal, 48)
-            .padding(.bottom, 8)
+        AudioDropZone(
+            title: "Drop audio into the inbox",
+            subtitle: "New files land in the inbox. Import them into your library when you're ready."
+        ) { urls in
+            appState.addFilesToInbox(urls)
         }
     }
 
@@ -144,196 +127,38 @@ struct ContentView: View {
             let urls = await DroppedFileLoader.loadURLs(from: providers)
             guard !urls.isEmpty else { return }
             await MainActor.run {
-                appState.receiveAudioFiles(urls)
+                appState.addFilesToInbox(urls)
             }
         }
         return true
     }
 
+    private func recordingID(for audioURL: URL?) -> String? {
+        guard let audioURL else { return nil }
+        return appState.recordings.first {
+            AppState.shared.audioURL(for: $0)?.standardizedFileURL == audioURL.standardizedFileURL
+        }?.id
+    }
+
     private var errorBinding: Binding<Bool> {
         Binding(
             get: { appState.errorMessage != nil },
-            set: { isPresented in
-                if !isPresented {
-                    appState.errorMessage = nil
-                }
-            }
+            set: { if !$0 { appState.errorMessage = nil } }
         )
     }
 
-    private var summarizerSuccessBinding: Binding<Bool> {
+    private var successBinding: Binding<Bool> {
         Binding(
-            get: { appState.summarizerSuccessMessage != nil },
-            set: { isPresented in
-                if !isPresented {
-                    appState.summarizerSuccessMessage = nil
-                }
-            }
+            get: { appState.successMessage != nil },
+            set: { if !$0 { appState.successMessage = nil } }
         )
     }
-}
 
-private struct JobDetailView: View {
-    let job: TranscriptionJob
-    let status: TranscriptionStatus
-    let isSummarizing: Bool
-    let onTranscribe: () -> Void
-    let onReveal: () -> Void
-    let onSummarize: (TranscriptRecord) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(job.displayName)
-                        .font(.title2.bold())
-
-                    Text(job.formattedDate)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Button("Reveal in Finder", action: onReveal)
-
-                Button(action: onTranscribe) {
-                    if case .inProgress = status {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Label(statusButtonTitle, systemImage: "waveform")
-                    }
-                }
-                .disabled(isTranscribeDisabled)
-            }
-
-            Divider()
-
-            transcriptContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    @ViewBuilder
-    private var transcriptContent: some View {
-        switch status {
-        case .notStarted:
-            ContentUnavailableView(
-                "Ready to transcribe",
-                systemImage: "text.bubble",
-                description: Text("Choose language and model, then run Whisper on this recording.")
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .queued:
-            VStack(spacing: 12) {
-                Image(systemName: "clock")
-                    .font(.largeTitle)
-                    .foregroundStyle(.secondary)
-                Text("Waiting in queue")
-                    .font(.headline)
-                Text("Earlier transcriptions will finish first.")
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .inProgress:
-            VStack(spacing: 12) {
-                ProgressView()
-                Text("Running whisper-cli…")
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .completed(let record):
-            VStack(alignment: .leading, spacing: 12) {
-                TranscriptionMetadataBanner(record: record)
-
-                ScrollView {
-                    Text(record.text)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                HStack {
-                    Button {
-                        onSummarize(record)
-                    } label: {
-                        if isSummarizing {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Label("Summarize", systemImage: "text.append")
-                        }
-                    }
-                    .disabled(isSummarizing)
-
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(record.text, forType: .string)
-                    } label: {
-                        Label("Copy transcript", systemImage: "doc.on.doc")
-                    }
-                    .disabled(isSummarizing)
-
-                    ShareLink(item: record.text) {
-                        Label("Share", systemImage: "square.and.arrow.up")
-                    }
-                    .disabled(isSummarizing)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        case .failed(let message):
-            ContentUnavailableView {
-                Label("Transcription failed", systemImage: "exclamationmark.triangle")
-            } description: {
-                Text(message)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-
-    private var statusButtonTitle: String {
-        switch status {
-        case .completed:
-            return "Re-transcribe"
-        case .failed:
-            return "Retry"
-        default:
-            return "Transcribe"
-        }
-    }
-
-    private var isTranscribeDisabled: Bool {
-        switch status {
-        case .inProgress, .queued:
-            return true
-        default:
-            return false
-        }
-    }
-}
-
-private struct TranscriptionMetadataBanner: View {
-    let record: TranscriptRecord
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "waveform.and.mic")
-                .foregroundStyle(.secondary)
-
-            Text(record.optionsSummary)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Spacer()
-
-            Text(record.createdAt, format: .dateTime.day().month().year().hour().minute())
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+    private var duplicateBinding: Binding<Bool> {
+        Binding(
+            get: { appState.duplicateImportPrompt != nil },
+            set: { if !$0 { appState.duplicateImportPrompt = nil } }
+        )
     }
 }
 

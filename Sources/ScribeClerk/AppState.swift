@@ -5,550 +5,737 @@ import SwiftUI
 final class AppState: ObservableObject {
     static let shared = AppState()
 
-    @Published private(set) var jobs: [TranscriptionJob] = []
-    @Published var selectedJobIDs: Set<String> = []
-    @Published var detailJobID: String?
-    @Published var pendingRequest: TranscriptionRequest?
-    @Published var summarizerRequest: SummarizerRequest?
-    @Published var summarizerSuccessMessage: String?
+    @Published private(set) var recordings: [RecordingRecord] = []
+    @Published private(set) var inboxItems: [InboxItem] = []
+    @Published var sidebarSelection: Set<String> = []
+    @Published var searchText = ""
+    @Published var filterSource: RecordingFilterSource = .all
+    @Published var filterStatus: RecordingFilterStatus = .all
+    @Published var pendingTranscriptionRequest: TranscriptionRequest?
+    @Published var summaryRequest: SummaryRequest?
+    @Published var publishRequest: PublishRequest?
+    @Published var duplicateImportPrompt: DuplicateImportPrompt?
     @Published var errorMessage: String?
-    @Published private(set) var activeTranscriptionJobID: String?
-    @Published private(set) var pendingQueueCount = 0
-    @Published private(set) var activeSummarizerJobID: String?
-    @Published private(set) var pendingSummarizerQueueCount = 0
-    @Published var isWhisperLogPanelVisible = false
+    @Published var successMessage: String?
     @Published private(set) var whisperLogText = ""
+    @Published private(set) var transcriptionProgress: Double?
+
+    @Published private(set) var activeTranscriptionRecordingID: String?
+    @Published private(set) var pendingTranscriptionCount = 0
+    @Published private(set) var activeSummaryRecordingID: String?
+    @Published private(set) var pendingSummaryCount = 0
+    @Published private(set) var activePublishRecordingID: String?
+    @Published private(set) var pendingPublishCount = 0
 
     private let transcriber = WhisperTranscriber()
-    private let summarizer = MeetingSummarizerService()
-    private let transcriptStore = TranscriptStore.shared
-    private var transcriptionQueue: [QueuedTranscription] = []
-    private var summarizerQueue: [QueuedSummarization] = []
-    private var queueProcessorTask: Task<Void, Never>?
-    private var summarizerProcessorTask: Task<Void, Never>?
-    private var activeQueueOptions: TranscriptionOptions?
-    private var activeSummarizerOptions: SummarizerOptions?
-    private var stopRequested = false
-    private var summarizerStopRequested = false
+    private let adapter = MeetingSummariesToNotionAdapter()
+    private let library = RecordingLibrary.shared
+    private let store = RecordingStore.shared
 
-    var isQueueActive: Bool {
-        queueProcessorTask != nil
+    private var transcriptionQueue: [QueuedTranscriptionItem] = []
+    private var summaryQueue: [QueuedSummaryItem] = []
+    private var publishQueue: [QueuedPublishItem] = []
+    private var transcriptionTask: Task<Void, Never>?
+    private var summaryTask: Task<Void, Never>?
+    private var publishTask: Task<Void, Never>?
+    private var stopTranscriptionRequested = false
+    private var stopSummaryRequested = false
+    private var stopPublishRequested = false
+
+    var isAnyJobActive: Bool {
+        isTranscriptionActive || isSummaryActive || isPublishActive
     }
 
-    var isSummarizerQueueActive: Bool {
-        summarizerProcessorTask != nil
+    var isTranscriptionActive: Bool {
+        transcriptionTask != nil
     }
 
-    var transcriptionQuitWarningMessage: String {
-        var parts = [
-            "Quitting will stop whisper-cli and discard progress on the current recording."
-        ]
+    var isSummaryActive: Bool {
+        summaryTask != nil
+    }
 
-        if let activeTranscriptionJobID,
-           let job = jobs.first(where: { $0.id == activeTranscriptionJobID }) {
-            parts.append("Currently transcribing: “\(job.displayName)”.")
+    var isPublishActive: Bool {
+        publishTask != nil
+    }
+
+    var filteredRecordings: [RecordingRecord] {
+        recordings.filter { record in
+            matchesSearch(record) && matchesSource(record) && matchesStatus(record)
         }
+    }
 
-        if pendingQueueCount > 0 {
-            let label = pendingQueueCount == 1 ? "file" : "files"
-            parts.append("\(pendingQueueCount) more \(label) waiting in the queue.")
+    var selectedRecordingID: String? {
+        get { recordings.first { sidebarSelection.contains($0.id) }?.id }
+        set {
+            if let newValue {
+                selectRecording(newValue)
+            } else {
+                sidebarSelection.subtract(recordings.map(\.id))
+            }
+        }
+    }
+
+    var selectedInboxItems: [InboxItem] {
+        inboxItems.filter { sidebarSelection.contains($0.id) }
+    }
+
+    var selectedRecording: RecordingRecord? {
+        guard let selectedRecordingID else { return nil }
+        return recordings.first { $0.id == selectedRecordingID }
+    }
+
+    func selectRecording(_ id: String?) {
+        if let id {
+            sidebarSelection.subtract(inboxItems.map(\.id))
+            sidebarSelection.insert(id)
+        } else {
+            sidebarSelection.subtract(recordings.map(\.id))
+        }
+    }
+
+    var quitWarningMessage: String {
+        var parts = ["Quitting will stop active jobs and discard in-progress work."]
+
+        if let activeTranscriptionRecordingID,
+           let recording = recordings.first(where: { $0.id == activeTranscriptionRecordingID }) {
+            parts.append("Transcribing: “\(recording.title)”.")
+        }
+        if let activeSummaryRecordingID,
+           let recording = recordings.first(where: { $0.id == activeSummaryRecordingID }) {
+            parts.append("Summarizing: “\(recording.title)”.")
+        }
+        if let activePublishRecordingID,
+           let recording = recordings.first(where: { $0.id == activePublishRecordingID }) {
+            parts.append("Publishing: “\(recording.title)”.")
         }
 
         return parts.joined(separator: " ")
     }
 
-    var queueJobIDs: [String] {
-        var ids: [String] = []
-        if let activeTranscriptionJobID {
-            ids.append(activeTranscriptionJobID)
-        }
-        ids.append(contentsOf: transcriptionQueue.map(\.jobID))
-        return ids
-    }
+    func loadLibrary() {
+        recordings = store.allRecordings()
+        refreshInbox()
 
-    var summarizerQueueJobIDs: [String] {
-        var ids: [String] = []
-        if let activeSummarizerJobID {
-            ids.append(activeSummarizerJobID)
-        }
-        ids.append(contentsOf: summarizerQueue.map(\.jobID))
-        return ids
-    }
-
-    var libraryJobs: [TranscriptionJob] {
-        let queueIDs = Set(queueJobIDs)
-        return jobs.filter { !queueIDs.contains($0.id) }
-    }
-
-    func queuePosition(for jobID: String) -> Int? {
-        guard let index = queueJobIDs.firstIndex(of: jobID) else { return nil }
-        return index + 1
-    }
-
-    func summarizerQueuePosition(for jobID: String) -> Int? {
-        guard let index = summarizerQueueJobIDs.firstIndex(of: jobID) else { return nil }
-        return index + 1
-    }
-
-    func summarizerState(for jobID: String) -> SummarizerJobState {
-        guard let position = summarizerQueuePosition(for: jobID) else { return .none }
-        if position == 1 {
-            return .inProgress
-        }
-        return .queued(position: position)
-    }
-
-    func loadHistory() {
-        let saved = transcriptStore.allRecords()
-        var loaded: [TranscriptionJob] = []
-
-        for (key, record) in saved {
-            guard let url = record.sourceURL else { continue }
-            loaded.append(
-                TranscriptionJob(
-                    id: key,
-                    audioURL: url,
-                    displayName: record.sourceName ?? url.deletingPathExtension().lastPathComponent,
-                    receivedAt: record.createdAt,
-                    status: .completed(record)
-                )
-            )
-        }
-
-        jobs = loaded.sorted { $0.receivedAt > $1.receivedAt }
-
-        if selectedJobIDs.isEmpty, let first = jobs.first?.id {
-            selectJob(first)
+        if selectedRecordingID == nil {
+            selectRecording(recordings.first?.id)
         }
     }
 
-    func receiveAudioFiles(_ urls: [URL]) {
+    func refreshInbox() {
+        inboxItems = library.inboxItems()
+    }
+
+    func addFilesToInbox(_ urls: [URL]) {
         let audioFiles = AudioFileFilter.filter(urls)
         guard !audioFiles.isEmpty else {
-            errorMessage = "No supported audio files were found. Try M4A, MP3, WAV, FLAC, or OGG."
+            errorMessage = "No supported audio files were found."
             return
         }
 
         NSApp.activate(ignoringOtherApps: true)
-        registerJobs(for: audioFiles)
+        library.addToInbox(audioFiles)
+        refreshInbox()
+    }
 
-        if isQueueActive, let options = activeQueueOptions {
-            let enqueued = enqueueTranscriptions(urls: audioFiles, options: options)
-            if enqueued > 0 {
-                selectJob(TranscriptionJob.stableID(for: audioFiles[0]))
-            }
+    func receiveAudioFiles(_ urls: [URL], source: RecordingSource) {
+        let audioFiles = AudioFileFilter.filter(urls)
+        guard !audioFiles.isEmpty else {
+            errorMessage = "No supported audio files were found."
             return
         }
 
-        selectJob(TranscriptionJob.stableID(for: audioFiles[0]))
-        pendingRequest = transcriptionRequest(for: audioFiles)
-    }
+        NSApp.activate(ignoringOtherApps: true)
 
-    func status(for job: TranscriptionJob) -> TranscriptionStatus {
-        jobs.first(where: { $0.id == job.id })?.status ?? job.status
-    }
-
-    func transcriptText(for job: TranscriptionJob) -> String? {
-        if case .completed(let record) = status(for: job) {
-            return record.text
-        }
-        return nil
-    }
-
-    func summarizeTargets(for job: TranscriptionJob) -> Set<String> {
-        let candidateIDs: Set<String>
-        if selectedJobIDs.contains(job.id), selectedJobIDs.count > 1 {
-            candidateIDs = selectedJobIDs
-        } else {
-            candidateIDs = [job.id]
-        }
-
-        return Set(candidateIDs.filter { jobID in
-            guard let item = jobs.first(where: { $0.id == jobID }) else { return false }
-            if case .completed = status(for: item) { return true }
-            return false
-        })
-    }
-
-    func beginSummarize(jobIDs: Set<String>) {
-        let items = jobIDs.compactMap { id -> SummarizerRequestItem? in
-            guard let job = jobs.first(where: { $0.id == id }),
-                  case .completed(let record) = status(for: job) else {
-                return nil
+        do {
+            let results = try library.importAudioFiles(audioFiles, source: source)
+            for result in results {
+                upsertRecording(result.record)
             }
-            return SummarizerRequestItem(job: job, record: record)
+            if let first = results.first {
+                selectRecording(first.record.id)
+            }
+        } catch RecordingLibraryError.duplicateFound(let existing) {
+            duplicateImportPrompt = DuplicateImportPrompt(
+                existing: existing,
+                pendingURLs: audioFiles,
+                source: source
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func confirmDuplicateImport(createAnyway: Bool) {
+        guard let prompt = duplicateImportPrompt else { return }
+        duplicateImportPrompt = nil
+
+        guard createAnyway else {
+            selectRecording(prompt.existing.id)
+            return
         }
 
+        do {
+            if prompt.source == .inbox, let url = prompt.pendingURLs.first {
+                let item = InboxItem(
+                    id: url.standardizedFileURL.path,
+                    url: url,
+                    displayName: url.deletingPathExtension().lastPathComponent,
+                    modifiedAt: Date(),
+                    contentHash: try library.contentHash(for: url),
+                    duration: AudioDuration.seconds(for: url)
+                )
+                let result = try library.importFromInbox(item, allowDuplicate: true)
+                upsertRecording(result.record)
+                selectRecording(result.record.id)
+                refreshInbox()
+            } else {
+                let results = try library.importAudioFiles(prompt.pendingURLs, source: prompt.source, allowDuplicate: true)
+                for result in results {
+                    upsertRecording(result.record)
+                }
+                selectRecording(results.first?.record.id)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func importInboxItem(_ item: InboxItem) {
+        importInboxItems([item])
+    }
+
+    func importInboxItems(_ items: [InboxItem]) {
         guard !items.isEmpty else { return }
 
-        if isSummarizerQueueActive, let options = activeSummarizerOptions {
-            enqueueSummarizations(items: items, options: options)
+        var lastImported: RecordingRecord?
+        for item in items {
+            do {
+                let result = try library.importFromInbox(item)
+                upsertRecording(result.record)
+                lastImported = result.record
+                sidebarSelection.remove(item.id)
+            } catch RecordingLibraryError.duplicateFound(let existing) {
+                duplicateImportPrompt = DuplicateImportPrompt(
+                    existing: existing,
+                    pendingURLs: [item.url],
+                    source: .inbox
+                )
+                break
+            } catch {
+                errorMessage = error.localizedDescription
+                break
+            }
+        }
+
+        refreshInbox()
+        if let lastImported {
+            selectRecording(lastImported.id)
+        }
+    }
+
+    func trashInboxItem(_ item: InboxItem) {
+        trashInboxItems([item])
+    }
+
+    func trashInboxItems(_ items: [InboxItem]) {
+        guard !items.isEmpty else { return }
+
+        for item in items {
+            do {
+                try library.trashInboxItem(item)
+                sidebarSelection.remove(item.id)
+            } catch {
+                errorMessage = error.localizedDescription
+                break
+            }
+        }
+
+        refreshInbox()
+    }
+
+    func beginTranscription(for recordingID: String) {
+        guard let recording = recordings.first(where: { $0.id == recordingID }),
+              let audioURL = audioURL(for: recording) else { return }
+
+        if isTranscriptionActive, let options = transcriptionQueue.first?.options ?? activeTranscriptionOptions(for: recording) {
+            enqueueTranscription(recordingID: recordingID, options: options)
             return
         }
 
-        summarizerRequest = SummarizerRequest(items: items)
+        pendingTranscriptionRequest = .files(
+            [audioURL],
+            title: recording.transcriptionStatus == .completed ? "Re-transcribe “\(recording.title)”" : "Transcribe “\(recording.title)”"
+        )
     }
 
-    @discardableResult
-    func enqueueTranscriptions(urls: [URL], options: TranscriptionOptions) -> Int {
-        registerJobs(for: urls)
-        activeQueueOptions = options
+    func enqueueTranscription(recordingID: String, options: TranscriptionOptions) {
+        guard !transcriptionQueue.contains(where: { $0.recordingID == recordingID }),
+              activeTranscriptionRecordingID != recordingID else { return }
 
-        var added = 0
-        for url in urls {
-            let jobID = TranscriptionJob.stableID(for: url)
-            guard let job = jobs.first(where: { $0.id == jobID }) else { continue }
-            guard shouldEnqueue(status: job.status) else { continue }
-
-            if transcriptionQueue.contains(where: { $0.jobID == jobID }) {
-                continue
-            }
-
-            transcriptionQueue.append(QueuedTranscription(jobID: jobID, options: options))
-            updateJobStatus(id: jobID, status: .queued)
-            added += 1
+        transcriptionQueue.append(QueuedTranscriptionItem(recordingID: recordingID, options: options))
+        pendingTranscriptionCount = transcriptionQueue.count
+        updateRecording(recordingID) { record in
+            record.transcriptionStatus = .queued
+            record.transcriptionError = nil
         }
-
-        pendingQueueCount = transcriptionQueue.count
-        startQueueProcessorIfNeeded()
-        return added
+        startTranscriptionProcessorIfNeeded()
     }
 
-    @discardableResult
-    func enqueueSummarizations(items: [SummarizerRequestItem], options: SummarizerOptions) -> Int {
-        activeSummarizerOptions = options
-
-        var added = 0
-        for item in items {
-            let jobID = item.job.id
-            if summarizerQueue.contains(where: { $0.jobID == jobID }) {
-                continue
-            }
-            if activeSummarizerJobID == jobID {
-                continue
-            }
-
-            summarizerQueue.append(QueuedSummarization(jobID: jobID, options: options))
-            added += 1
+    func beginSummary(for recordingID: String, regenerate: Bool = false) {
+        if isSummaryActive, let options = summaryQueue.first?.options {
+            enqueueSummary(recordingID: recordingID, options: options, regenerate: regenerate)
+            return
         }
-
-        pendingSummarizerQueueCount = summarizerQueue.count
-        startSummarizerProcessorIfNeeded()
-        return added
+        summaryRequest = SummaryRequest(recordingID: recordingID, regenerate: regenerate)
     }
 
-    func revealInFinder(_ job: TranscriptionJob) {
-        NSWorkspace.shared.activateFileViewerSelecting([job.audioURL])
+    func enqueueSummary(recordingID: String, options: SummarizerOptions, regenerate: Bool) {
+        guard !summaryQueue.contains(where: { $0.recordingID == recordingID && $0.options == options }),
+              activeSummaryRecordingID != recordingID else { return }
+
+        summaryQueue.append(QueuedSummaryItem(recordingID: recordingID, options: options, regenerate: regenerate))
+        pendingSummaryCount = summaryQueue.count
+        startSummaryProcessorIfNeeded()
     }
 
-    func canDelete(_ job: TranscriptionJob) -> Bool {
-        switch status(for: job) {
-        case .inProgress:
-            return false
-        default:
-            return true
+    func beginPublish(recordingID: String, variantID: String) {
+        publishRequest = PublishRequest(recordingID: recordingID, variantID: variantID)
+    }
+
+    func enqueuePublish(recordingID: String, variantID: String) {
+        guard !publishQueue.contains(where: { $0.recordingID == recordingID && $0.variantID == variantID }),
+              activePublishRecordingID != recordingID else { return }
+
+        publishQueue.append(QueuedPublishItem(recordingID: recordingID, variantID: variantID))
+        pendingPublishCount = publishQueue.count
+        updateVariant(recordingID: recordingID, variantID: variantID) { variant in
+            variant.status = .publishing
+            variant.errorMessage = nil
         }
+        startPublishProcessorIfNeeded()
     }
 
-    func deleteJob(_ job: TranscriptionJob) {
-        guard canDelete(job) else { return }
+    func reloadTranscript(for recordingID: String) {
+        guard var record = recordings.first(where: { $0.id == recordingID }) else { return }
+        guard let url = store.transcriptURL(for: record),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return }
 
-        transcriptionQueue.removeAll { $0.jobID == job.id }
-        pendingQueueCount = transcriptionQueue.count
-        summarizerQueue.removeAll { $0.jobID == job.id }
-        pendingSummarizerQueueCount = summarizerQueue.count
-
-        transcriptStore.delete(for: job.id)
-
-        let formerIndex = jobs.firstIndex(where: { $0.id == job.id })
-        jobs.removeAll { $0.id == job.id }
-
-        selectedJobIDs.remove(job.id)
-
-        if detailJobID == job.id {
-            if jobs.isEmpty {
-                detailJobID = nil
-            } else if let formerIndex {
-                let nextIndex = min(formerIndex, jobs.count - 1)
-                detailJobID = jobs[nextIndex].id
-            } else {
-                detailJobID = jobs.first?.id
-            }
+        let previousText = store.readTranscript(for: record)
+        if previousText != text {
+            record.markSummariesStale()
+            persist(record)
         }
     }
 
-    func stopQueue() {
-        guard isQueueActive else { return }
+    func openTranscriptExternally(for recordingID: String) {
+        guard let record = recordings.first(where: { $0.id == recordingID }),
+              let url = store.transcriptURL(for: record) else { return }
+        NSWorkspace.shared.open(url)
+    }
 
-        stopRequested = true
-        queueProcessorTask?.cancel()
+    func saveSummaryMarkdown(for recordingID: String, variantID: String, markdown: String) {
+        guard var record = recordings.first(where: { $0.id == recordingID }),
+              var variant = record.summaryVariants.first(where: { $0.id == variantID }) else { return }
+
+        do {
+            _ = try store.writeSummary(markdown, for: &record, variant: &variant)
+            variant.status = .ready
+            record.upsertVariant(variant)
+            persist(record)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func revealRecording(_ recordingID: String) {
+        AppSupportPaths.revealInFinder(store.recordingDirectory(for: recordingID))
+    }
+
+    func revealInbox() {
+        AppSupportPaths.revealInFinder(library.inboxDirectory)
+    }
+
+    func openPublishedURL(_ urlString: String) {
+        guard let url = URL(string: urlString) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    func deleteRecording(_ recordingID: String) {
+        guard let record = recordings.first(where: { $0.id == recordingID }),
+              record.transcriptionStatus != .inProgress,
+              record.transcriptionStatus != .queued,
+              activeSummaryRecordingID != recordingID,
+              activePublishRecordingID != recordingID else { return }
+
+        transcriptionQueue.removeAll { $0.recordingID == recordingID }
+        summaryQueue.removeAll { $0.recordingID == recordingID }
+        publishQueue.removeAll { $0.recordingID == recordingID }
+        store.delete(id: recordingID)
+        recordings.removeAll { $0.id == recordingID }
+
+        if selectedRecordingID == recordingID {
+            selectRecording(recordings.first?.id)
+        }
+        sidebarSelection.remove(recordingID)
+    }
+
+    func stopAllQueues() {
+        stopTranscriptionQueue()
+        stopSummaryQueue()
+        stopPublishQueue()
+    }
+
+    func stopTranscriptionQueue() {
+        guard isTranscriptionActive else { return }
+        stopTranscriptionRequested = true
+        transcriptionTask?.cancel()
         transcriber.cancel()
         transcriptionQueue.removeAll()
-        pendingQueueCount = 0
-        activeTranscriptionJobID = nil
-        resetQueuedAndInProgressJobs()
-        appendWhisperLog("\n# queue stopped\n")
+        pendingTranscriptionCount = 0
+        activeTranscriptionRecordingID = nil
+        transcriptionProgress = nil
+        resetTranscriptionStatuses()
+        appendWhisperLog("\n# transcription queue stopped\n")
     }
 
-    func stopSummarizerQueue() {
-        guard isSummarizerQueueActive else { return }
-
-        summarizerStopRequested = true
-        summarizerProcessorTask?.cancel()
-        summarizer.cancel()
-        summarizerQueue.removeAll()
-        pendingSummarizerQueueCount = 0
-        activeSummarizerJobID = nil
+    func stopSummaryQueue() {
+        guard isSummaryActive else { return }
+        stopSummaryRequested = true
+        summaryTask?.cancel()
+        adapter.cancel()
+        summaryQueue.removeAll()
+        pendingSummaryCount = 0
+        activeSummaryRecordingID = nil
     }
 
-    func selectJob(_ jobID: String) {
-        selectedJobIDs = [jobID]
-        detailJobID = jobID
-    }
-
-    func syncDetailJobID() {
-        if let detailJobID, selectedJobIDs.contains(detailJobID) {
-            return
-        }
-        detailJobID = jobs.first(where: { selectedJobIDs.contains($0.id) })?.id
+    func stopPublishQueue() {
+        guard isPublishActive else { return }
+        stopPublishRequested = true
+        publishTask?.cancel()
+        adapter.cancel()
+        publishQueue.removeAll()
+        pendingPublishCount = 0
+        activePublishRecordingID = nil
     }
 
     func appendWhisperLog(_ chunk: String) {
         whisperLogText += chunk
+        if let progress = WhisperProgressParser.latestProgress(in: whisperLogText) {
+            transcriptionProgress = progress
+        }
     }
 
     func clearWhisperLog() {
         whisperLogText = ""
+        transcriptionProgress = nil
     }
 
-    private func beginWhisperLog(for job: TranscriptionJob, options: TranscriptionOptions) {
-        let settings = AppSettings.shared
-        let modelName = URL(fileURLWithPath: options.modelPath).lastPathComponent
-        whisperLogText = ""
-        appendWhisperLog(
-            "$ \(settings.whisperBinaryPath) -m \(options.modelPath) -l \(options.language) -otxt -np -nt \"\(job.audioURL.path)\"\n"
-        )
-        appendWhisperLog("# model: \(modelName) · file: \(job.displayName)\n\n")
-    }
-
-    private func registerJobs(for urls: [URL]) {
-        for url in urls {
-            let job = TranscriptionJob.make(from: url)
-            if let index = jobs.firstIndex(where: { $0.id == job.id }) {
-                if case .completed = jobs[index].status {
-                    continue
-                }
-                if case .queued = jobs[index].status {
-                    continue
-                }
-                if case .inProgress = jobs[index].status {
-                    continue
-                }
-                jobs[index] = job
-            } else {
-                jobs.insert(job, at: 0)
-            }
+    func transcriptionProgressLabel(for recordingID: String) -> String {
+        guard activeTranscriptionRecordingID == recordingID,
+              let transcriptionProgress else {
+            return "Transcribing…"
         }
-
-        jobs.sort { $0.receivedAt > $1.receivedAt }
+        return "Transcribing… \(Int((transcriptionProgress * 100).rounded()))%"
     }
 
-    private func transcriptionRequest(for urls: [URL]) -> TranscriptionRequest {
-        let title: String
-        if urls.count == 1 {
-            title = "Transcribe “\(urls[0].deletingPathExtension().lastPathComponent)”"
+    func audioURL(for record: RecordingRecord) -> URL? {
+        let url = store.audioURL(for: record)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    func transcriptText(for record: RecordingRecord) -> String? {
+        store.readTranscript(for: record)
+    }
+
+    func summaryText(for record: RecordingRecord, variant: SummaryVariantRecord) -> String? {
+        store.readSummary(for: record, variant: variant)
+    }
+
+    private func activeTranscriptionOptions(for record: RecordingRecord) -> TranscriptionOptions? {
+        if let item = transcriptionQueue.first(where: { $0.recordingID == record.id }) {
+            return item.options
+        }
+        return record.transcriptionOptions(defaultModelPath: AppSettings.shared.defaultModelPath)
+            ?? AppSettings.shared.defaultTranscriptionOptions()
+    }
+
+    private func upsertRecording(_ record: RecordingRecord) {
+        if let index = recordings.firstIndex(where: { $0.id == record.id }) {
+            recordings[index] = record
         } else {
-            title = "Transcribe \(urls.count) Recordings"
+            recordings.insert(record, at: 0)
         }
-        return .files(urls, title: title)
+        recordings.sort { $0.importedAt > $1.importedAt }
     }
 
-    private func shouldEnqueue(status: TranscriptionStatus) -> Bool {
-        switch status {
-        case .inProgress, .queued:
-            return false
-        case .notStarted, .failed, .completed:
+    private func persist(_ record: RecordingRecord) {
+        do {
+            try store.save(record)
+            upsertRecording(record)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func updateRecording(_ recordingID: String, mutate: (inout RecordingRecord) -> Void) {
+        guard var record = recordings.first(where: { $0.id == recordingID }) else { return }
+        mutate(&record)
+        persist(record)
+    }
+
+    private func updateVariant(recordingID: String, variantID: String, mutate: (inout SummaryVariantRecord) -> Void) {
+        guard var record = recordings.first(where: { $0.id == recordingID }),
+              var variant = record.summaryVariants.first(where: { $0.id == variantID }) else { return }
+        mutate(&variant)
+        record.upsertVariant(variant)
+        persist(record)
+    }
+
+    private func matchesSearch(_ record: RecordingRecord) -> Bool {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return true }
+        return record.title.localizedCaseInsensitiveContains(query)
+    }
+
+    private func matchesSource(_ record: RecordingRecord) -> Bool {
+        switch filterSource {
+        case .all:
             return true
+        case .inbox:
+            return record.source == .inbox
+        case .dragDrop:
+            return record.source == .dragDrop
+        case .filePicker:
+            return record.source == .filePicker
         }
     }
 
-    private func startQueueProcessorIfNeeded() {
-        guard queueProcessorTask == nil else { return }
-
-        queueProcessorTask = Task {
-            await runQueueProcessor()
-            finishQueueProcessor()
+    private func matchesStatus(_ record: RecordingRecord) -> Bool {
+        switch filterStatus {
+        case .all:
+            return true
+        case .imported:
+            return record.transcriptionStatus != .completed
+        case .transcribed:
+            return record.transcriptionStatus == .completed
+        case .summarized:
+            return record.summaryVariants.contains { $0.status == .ready || $0.status == .published || $0.status == .stale }
+        case .published:
+            return record.summaryVariants.contains { $0.status == .published }
         }
     }
 
-    private func finishQueueProcessor() {
-        queueProcessorTask = nil
-        activeQueueOptions = nil
-        activeTranscriptionJobID = nil
-        pendingQueueCount = 0
-        stopRequested = false
-    }
-
-    private func startSummarizerProcessorIfNeeded() {
-        guard summarizerProcessorTask == nil else { return }
-
-        summarizerProcessorTask = Task {
-            await runSummarizerProcessor()
-            finishSummarizerProcessor()
+    private func startTranscriptionProcessorIfNeeded() {
+        guard transcriptionTask == nil else { return }
+        transcriptionTask = Task {
+            await runTranscriptionProcessor()
+            transcriptionTask = nil
+            stopTranscriptionRequested = false
+            activeTranscriptionRecordingID = nil
+            pendingTranscriptionCount = 0
+            transcriptionProgress = nil
         }
     }
 
-    private func finishSummarizerProcessor() {
-        summarizerProcessorTask = nil
-        activeSummarizerOptions = nil
-        activeSummarizerJobID = nil
-        pendingSummarizerQueueCount = 0
-        summarizerStopRequested = false
+    private func startSummaryProcessorIfNeeded() {
+        guard summaryTask == nil else { return }
+        summaryTask = Task {
+            await runSummaryProcessor()
+            summaryTask = nil
+            stopSummaryRequested = false
+            activeSummaryRecordingID = nil
+            pendingSummaryCount = 0
+        }
     }
 
-    private func runQueueProcessor() async {
+    private func startPublishProcessorIfNeeded() {
+        guard publishTask == nil else { return }
+        publishTask = Task {
+            await runPublishProcessor()
+            publishTask = nil
+            stopPublishRequested = false
+            activePublishRecordingID = nil
+            pendingPublishCount = 0
+        }
+    }
+
+    private func runTranscriptionProcessor() async {
         while !transcriptionQueue.isEmpty {
-            if Task.isCancelled || stopRequested {
-                break
-            }
+            if Task.isCancelled || stopTranscriptionRequested { break }
 
             let item = transcriptionQueue.removeFirst()
-            pendingQueueCount = transcriptionQueue.count
+            pendingTranscriptionCount = transcriptionQueue.count
 
-            guard let job = jobs.first(where: { $0.id == item.jobID }) else { continue }
+            guard var record = recordings.first(where: { $0.id == item.recordingID }),
+                  let audioURL = audioURL(for: record) else { continue }
 
-            activeTranscriptionJobID = job.id
-            updateJobStatus(id: job.id, status: .inProgress)
-            errorMessage = nil
-            beginWhisperLog(for: job, options: item.options)
+            activeTranscriptionRecordingID = record.id
+            record.transcriptionStatus = .inProgress
+            record.transcriptionError = nil
+            persist(record)
+            clearWhisperLog()
+            appendWhisperLog(
+                "$ whisper-cli -l \(item.options.language) \"\(audioURL.lastPathComponent)\"\n\n"
+            )
 
             do {
-                let record = try await transcriber.transcribe(
-                    audioURL: job.audioURL,
+                let transcript = try await transcriber.transcribe(
+                    audioURL: audioURL,
                     options: item.options,
                     onLog: { [weak self] chunk in
                         self?.appendWhisperLog(chunk)
                     }
                 )
 
-                if Task.isCancelled || stopRequested {
-                    updateJobStatus(id: job.id, status: .notStarted)
-                    appendWhisperLog("\n# stopped\n\n")
+                if Task.isCancelled || stopTranscriptionRequested {
+                    record.transcriptionStatus = .notStarted
+                    persist(record)
                     break
                 }
 
-                let stored = record.withSource(
-                    url: job.audioURL,
-                    name: job.displayName
-                )
-                try transcriptStore.save(stored, for: job.id)
-                updateJobStatus(id: job.id, status: .completed(stored))
+                _ = try store.writeTranscript(transcript.text, for: &record)
+                record.transcriptionStatus = .completed
+                record.transcriptionLanguage = item.options.language
+                record.transcriptionModelPath = item.options.modelPath
+                record.transcribedAt = Date()
+                record.transcriptionError = nil
+                record.markSummariesStale()
+                persist(record)
                 appendWhisperLog("\n# completed successfully\n\n")
-            } catch is CancellationError {
-                updateJobStatus(id: job.id, status: .notStarted)
-                appendWhisperLog("\n# cancelled\n\n")
-                break
-            } catch WhisperTranscriberError.cancelled {
-                updateJobStatus(id: job.id, status: .notStarted)
-                appendWhisperLog("\n# cancelled\n\n")
-                break
             } catch {
-                if Task.isCancelled || stopRequested {
-                    updateJobStatus(id: job.id, status: .notStarted)
-                    appendWhisperLog("\n# stopped\n\n")
+                if Task.isCancelled || stopTranscriptionRequested {
+                    record.transcriptionStatus = .notStarted
+                    persist(record)
                     break
                 }
-                updateJobStatus(id: job.id, status: .failed(error.localizedDescription))
+                record.transcriptionStatus = .failed
+                record.transcriptionError = error.localizedDescription
+                persist(record)
                 errorMessage = error.localizedDescription
                 appendWhisperLog("\n# failed: \(error.localizedDescription)\n\n")
             }
 
-            activeTranscriptionJobID = nil
+            activeTranscriptionRecordingID = nil
+            transcriptionProgress = nil
         }
 
-        if Task.isCancelled || stopRequested {
+        if Task.isCancelled || stopTranscriptionRequested {
             transcriptionQueue.removeAll()
-            pendingQueueCount = 0
-            resetQueuedAndInProgressJobs()
+            pendingTranscriptionCount = 0
+            resetTranscriptionStatuses()
         }
     }
 
-    private func runSummarizerProcessor() async {
-        let settings = AppSettings.shared
-        let repoRoot = URL(fileURLWithPath: settings.summarizerRepoPath, isDirectory: true)
+    private func runSummaryProcessor() async {
+        while !summaryQueue.isEmpty {
+            if Task.isCancelled || stopSummaryRequested { break }
 
-        while !summarizerQueue.isEmpty {
-            if Task.isCancelled || summarizerStopRequested {
-                break
-            }
+            let item = summaryQueue.removeFirst()
+            pendingSummaryCount = summaryQueue.count
 
-            let item = summarizerQueue.removeFirst()
-            pendingSummarizerQueueCount = summarizerQueue.count
+            guard var record = recordings.first(where: { $0.id == item.recordingID }),
+                  let transcriptURL = store.transcriptURL(for: record) else { continue }
 
-            guard let job = jobs.first(where: { $0.id == item.jobID }),
-                  case .completed(let record) = status(for: job) else {
-                continue
-            }
+            activeSummaryRecordingID = record.id
+            var variant = record.variant(for: item.options) ?? SummaryVariantRecord.make(options: item.options)
+            variant.status = .generating
+            variant.errorMessage = nil
+            record.upsertVariant(variant)
+            persist(record)
 
-            activeSummarizerJobID = job.id
-            errorMessage = nil
-            summarizerSuccessMessage = nil
+            let summaryURL = store.summariesDirectory(for: record.id)
+                .appendingPathComponent("\(variant.id).md")
 
             do {
-                let exported = try summarizer.exportTranscript(
-                    text: record.text,
-                    createdAt: record.createdAt,
-                    sourceName: record.sourceName ?? job.displayName,
-                    repoRoot: repoRoot
-                )
-
-                if Task.isCancelled || summarizerStopRequested {
-                    break
-                }
-
-                try await summarizer.runPipeline(
-                    searchTerm: exported.searchTerm,
+                let result = try await adapter.generateSummary(
+                    transcriptPath: transcriptURL,
+                    summaryPath: summaryURL,
                     options: item.options,
-                    repoRoot: repoRoot,
-                    denoPath: settings.denoBinaryPath
+                    skipCache: item.regenerate
                 )
 
-                if Task.isCancelled || summarizerStopRequested {
-                    break
-                }
+                if Task.isCancelled || stopSummaryRequested { break }
 
-                summarizerSuccessMessage =
-                    "Summary created for “\(exported.fileURL.lastPathComponent)”."
+                variant.status = .ready
+                variant.title = result.title
+                variant.generatedAt = Date()
+                variant.markdownFileName = summaryURL.lastPathComponent
+                variant.errorMessage = nil
+                record.upsertVariant(variant)
+                persist(record)
+                successMessage = "Summary ready for “\(record.title)”."
             } catch {
-                if Task.isCancelled || summarizerStopRequested {
-                    break
-                }
+                if Task.isCancelled || stopSummaryRequested { break }
+                variant.status = .failed
+                variant.errorMessage = error.localizedDescription
+                record.upsertVariant(variant)
+                persist(record)
                 errorMessage = error.localizedDescription
             }
 
-            activeSummarizerJobID = nil
-        }
-
-        if Task.isCancelled || summarizerStopRequested {
-            summarizerQueue.removeAll()
-            pendingSummarizerQueueCount = 0
+            activeSummaryRecordingID = nil
         }
     }
 
-    private func resetQueuedAndInProgressJobs() {
-        for index in jobs.indices {
-            switch jobs[index].status {
+    private func runPublishProcessor() async {
+        while !publishQueue.isEmpty {
+            if Task.isCancelled || stopPublishRequested { break }
+
+            let item = publishQueue.removeFirst()
+            pendingPublishCount = publishQueue.count
+
+            guard var record = recordings.first(where: { $0.id == item.recordingID }),
+                  let transcriptURL = store.transcriptURL(for: record),
+                  var variant = record.summaryVariants.first(where: { $0.id == item.variantID }),
+                  let summaryURL = store.summaryURL(for: record, variant: variant) else { continue }
+
+            activePublishRecordingID = record.id
+
+            do {
+                let result = try await adapter.publish(
+                    transcriptPath: transcriptURL,
+                    summaryPath: summaryURL,
+                    options: variant.options
+                )
+
+                if Task.isCancelled || stopPublishRequested { break }
+
+                let attempt = PublishAttempt(
+                    success: true,
+                    destinationURL: result.documentURL?.absoluteString
+                )
+                variant.publishAttempts.append(attempt)
+                variant.status = .published
+                variant.title = result.title ?? variant.title
+                variant.errorMessage = nil
+                record.upsertVariant(variant)
+                persist(record)
+                successMessage = "Published “\(record.title)” to Notion."
+            } catch {
+                if Task.isCancelled || stopPublishRequested { break }
+                let attempt = PublishAttempt(success: false, errorMessage: error.localizedDescription)
+                variant.publishAttempts.append(attempt)
+                variant.status = .failed
+                variant.errorMessage = error.localizedDescription
+                record.upsertVariant(variant)
+                persist(record)
+                errorMessage = error.localizedDescription
+            }
+
+            activePublishRecordingID = nil
+        }
+    }
+
+    private func resetTranscriptionStatuses() {
+        for index in recordings.indices {
+            switch recordings[index].transcriptionStatus {
             case .queued, .inProgress:
-                jobs[index].status = .notStarted
+                recordings[index].transcriptionStatus = .notStarted
+                try? store.save(recordings[index])
             default:
                 break
             }
         }
-    }
-
-    private func updateJobStatus(id: String, status: TranscriptionStatus) {
-        guard let index = jobs.firstIndex(where: { $0.id == id }) else { return }
-        jobs[index].status = status
     }
 }
 

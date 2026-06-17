@@ -1,10 +1,8 @@
 import SwiftUI
 
-struct WhisperLogPanel: View {
-    let text: String
-    let isRunning: Bool
-    let onClear: () -> Void
-    let onClose: () -> Void
+struct WhisperLogWindowView: View {
+    @ObservedObject private var appState = AppState.shared
+    @Environment(\.dismissWindow) private var dismissWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -12,20 +10,34 @@ struct WhisperLogPanel: View {
                 Label("Whisper Output", systemImage: "terminal")
                     .font(.headline)
 
-                if isRunning {
-                    ProgressView()
-                        .controlSize(.small)
+                if appState.isTranscriptionActive {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let progress = appState.transcriptionProgress {
+                            ProgressView(value: progress) {
+                                Text(appState.transcriptionProgressLabel(
+                                    for: appState.activeTranscriptionRecordingID ?? ""
+                                ))
+                            }
+                            .progressViewStyle(.linear)
+                            .frame(width: 220)
+                        } else {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    }
                 }
 
                 Spacer()
 
-                Button("Clear", action: onClear)
-                    .disabled(text.isEmpty)
+                Button("Clear", action: appState.clearWhisperLog)
+                    .disabled(appState.whisperLogText.isEmpty)
 
-                Button("Close", action: onClose)
+                Button("Close") {
+                    dismissWindow(id: WhisperLogWindow.id)
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
             .background(.bar)
 
             Divider()
@@ -33,35 +45,33 @@ struct WhisperLogPanel: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     Text(displayText)
-                        .font(.system(.caption, design: .monospaced))
+                        .font(.system(.body, design: .monospaced))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
+                        .padding(16)
                         .id("log-end")
                 }
-                .background(Color(nsColor: .textBackgroundColor).opacity(0.35))
-                .onChange(of: text) { _, _ in
+                .background(Color(nsColor: .textBackgroundColor))
+                .onChange(of: appState.whisperLogText) { _, _ in
                     withAnimation(.easeOut(duration: 0.15)) {
                         proxy.scrollTo("log-end", anchor: .bottom)
                     }
                 }
             }
         }
-        .frame(minHeight: 160, idealHeight: 220, maxHeight: 320)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(.quaternary, lineWidth: 1)
-        }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 12)
+        .frame(minWidth: 640, minHeight: 320)
     }
 
     private var displayText: String {
-        if text.isEmpty {
-            return isRunning ? "Waiting for whisper-cli output…" : "No whisper output yet."
+        if appState.whisperLogText.isEmpty {
+            return appState.isTranscriptionActive
+                ? "Waiting for whisper-cli output…"
+                : "No whisper output yet."
         }
-        return text
+        return appState.whisperLogText
     }
+}
+
+enum WhisperLogWindow {
+    static let id = "whisper-log"
 }
