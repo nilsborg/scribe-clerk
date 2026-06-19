@@ -16,7 +16,6 @@ final class AppState: ObservableObject {
     @Published var publishRequest: PublishRequest?
     @Published var duplicateImportPrompt: DuplicateImportPrompt?
     @Published var errorMessage: String?
-    @Published var successMessage: String?
     @Published private(set) var whisperLogText = ""
     @Published private(set) var transcriptionProgress: Double?
 
@@ -258,18 +257,35 @@ final class AppState: ObservableObject {
     }
 
     func beginTranscription(for recordingID: String) {
-        guard let recording = recordings.first(where: { $0.id == recordingID }),
-              let audioURL = audioURL(for: recording) else { return }
+        beginBulkTranscription(for: [recordingID])
+    }
 
-        if isTranscriptionActive, let options = transcriptionQueue.first?.options ?? activeTranscriptionOptions(for: recording) {
-            enqueueTranscription(recordingID: recordingID, options: options)
+    func beginBulkTranscription(for recordingIDs: [String]) {
+        let eligible = recordingIDs.filter { id in
+            guard let record = recordings.first(where: { $0.id == id }),
+                  audioURL(for: record) != nil else { return false }
+            return record.transcriptionStatus != .inProgress && record.transcriptionStatus != .queued
+        }
+        guard !eligible.isEmpty else { return }
+
+        if isTranscriptionActive {
+            let options = transcriptionQueue.first?.options ?? AppSettings.shared.defaultTranscriptionOptions()
+            for id in eligible {
+                enqueueTranscription(recordingID: id, options: options)
+            }
             return
         }
 
-        pendingTranscriptionRequest = .files(
-            [audioURL],
-            title: recording.transcriptionStatus == .completed ? "Re-transcribe “\(recording.title)”" : "Transcribe “\(recording.title)”"
-        )
+        let title: String
+        if eligible.count == 1, let recording = recordings.first(where: { $0.id == eligible[0] }) {
+            title = recording.transcriptionStatus == .completed
+                ? "Re-transcribe “\(recording.title)”"
+                : "Transcribe “\(recording.title)”"
+        } else {
+            title = "Transcribe \(eligible.count) recordings"
+        }
+
+        pendingTranscriptionRequest = .recordingIDs(eligible, title: title)
     }
 
     func enqueueTranscription(recordingID: String, options: TranscriptionOptions) {
@@ -286,11 +302,27 @@ final class AppState: ObservableObject {
     }
 
     func beginSummary(for recordingID: String, regenerate: Bool = false) {
+        beginBulkSummary(for: [recordingID], regenerate: regenerate)
+    }
+
+    func beginBulkSummary(for recordingIDs: [String], regenerate: Bool = false) {
+        let eligible = recordingIDs.filter { id in
+            guard let record = recordings.first(where: { $0.id == id }) else { return false }
+            guard record.transcriptionStatus == .completed else { return false }
+            return !record.summaryVariants.contains {
+                $0.status == .queued || $0.status == .generating || $0.status == .publishing
+            }
+        }
+        guard !eligible.isEmpty else { return }
+
         if isSummaryActive, let options = summaryQueue.first?.options {
-            enqueueSummary(recordingID: recordingID, options: options, regenerate: regenerate)
+            for id in eligible {
+                enqueueSummary(recordingID: id, options: options, regenerate: regenerate)
+            }
             return
         }
-        summaryRequest = SummaryRequest(recordingID: recordingID, regenerate: regenerate)
+
+        summaryRequest = SummaryRequest(recordingIDs: eligible, regenerate: regenerate)
     }
 
     func enqueueSummary(recordingID: String, options: SummarizerOptions, regenerate: Bool) {
@@ -311,7 +343,22 @@ final class AppState: ObservableObject {
     }
 
     func beginPublish(recordingID: String, variantID: String) {
-        publishRequest = PublishRequest(recordingID: recordingID, variantID: variantID)
+        beginBulkPublish(items: [PublishRequestItem(recordingID: recordingID, variantID: variantID)])
+    }
+
+    func beginBulkPublish(items: [PublishRequestItem]) {
+        let eligible = items.filter { item in
+            guard let record = recordings.first(where: { $0.id == item.recordingID }),
+                  let variant = record.summaryVariants.first(where: { $0.id == item.variantID }) else {
+                return false
+            }
+            let isPublishable = [.ready, .stale, .published, .failed].contains(variant.status)
+            let isPublishing = record.summaryVariants.contains { $0.status == .publishing }
+            return isPublishable && !isPublishing
+        }
+        guard !eligible.isEmpty else { return }
+
+        publishRequest = PublishRequest(items: eligible)
     }
 
     func enqueuePublish(recordingID: String, variantID: String) {
@@ -392,16 +439,6 @@ final class AppState: ObservableObject {
             selectRecording(recordings.first?.id)
         }
         sidebarSelection.remove(recordingID)
-    }
-
-    func transcribeRecordings(_ recordingIDs: [String]) {
-        let options = AppSettings.shared.defaultTranscriptionOptions()
-        for id in recordingIDs {
-            guard let record = recordings.first(where: { $0.id == id }),
-                  record.transcriptionStatus != .inProgress,
-                  record.transcriptionStatus != .queued else { continue }
-            enqueueTranscription(recordingID: id, options: options)
-        }
     }
 
     func deleteRecordings(_ recordingIDs: [String]) {
@@ -634,6 +671,10 @@ final class AppState: ObservableObject {
                 record.markSummariesStale()
                 persist(record)
                 appendWhisperLog("\n# completed successfully\n\n")
+                JobNotification.post(
+                    title: "Transcription complete",
+                    body: "“\(record.title)” is ready."
+                )
             } catch {
                 if Task.isCancelled || stopTranscriptionRequested {
                     record.transcriptionStatus = .notStarted
@@ -695,7 +736,10 @@ final class AppState: ObservableObject {
                 variant.errorMessage = nil
                 record.upsertVariant(variant)
                 persist(record)
-                successMessage = "Summary ready for “\(record.title)”."
+                JobNotification.post(
+                    title: "Summary ready",
+                    body: "“\(record.title)” is ready to publish."
+                )
             } catch {
                 if Task.isCancelled || stopSummaryRequested { break }
                 variant.status = .failed
@@ -748,7 +792,10 @@ final class AppState: ObservableObject {
                 variant.errorMessage = nil
                 record.upsertVariant(variant)
                 persist(record)
-                successMessage = "Published “\(record.title)” to Notion."
+                JobNotification.post(
+                    title: "Published to Notion",
+                    body: "“\(record.title)” was published."
+                )
             } catch {
                 if Task.isCancelled || stopPublishRequested { break }
                 let attempt = PublishAttempt(success: false, errorMessage: error.localizedDescription)

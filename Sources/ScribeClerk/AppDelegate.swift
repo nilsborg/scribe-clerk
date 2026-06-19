@@ -4,6 +4,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppSupportPaths.migrateLegacyDataIfNeeded()
+        JobNotification.requestAuthorizationIfNeeded()
         AppState.shared.loadLibrary()
     }
 

@@ -1,7 +1,8 @@
 import SwiftUI
 
 struct SummaryOptionsView: View {
-    let recording: RecordingRecord?
+    let recordingIDs: [String]
+    let sampleRecording: RecordingRecord?
     let regenerate: Bool
     let queueIsActive: Bool
     let onCancel: () -> Void
@@ -11,13 +12,15 @@ struct SummaryOptionsView: View {
     @State private var language: SummarizerLanguage
 
     init(
-        recording: RecordingRecord?,
+        recordingIDs: [String],
+        sampleRecording: RecordingRecord?,
         regenerate: Bool,
         queueIsActive: Bool,
         onCancel: @escaping () -> Void,
         onStart: @escaping (SummarizerOptions) -> Void
     ) {
-        self.recording = recording
+        self.recordingIDs = recordingIDs
+        self.sampleRecording = sampleRecording
         self.regenerate = regenerate
         self.queueIsActive = queueIsActive
         self.onCancel = onCancel
@@ -30,11 +33,14 @@ struct SummaryOptionsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(regenerate ? "Re-summarize" : "Summarize")
+            Text(title)
                 .font(.title3.bold())
 
-            if let recording {
-                Text(recording.title)
+            if recordingIDs.count == 1, let sampleRecording {
+                Text(sampleRecording.title)
+                    .foregroundStyle(.secondary)
+            } else if recordingIDs.count > 1 {
+                Text("\(recordingIDs.count) recordings")
                     .foregroundStyle(.secondary)
             }
 
@@ -56,7 +62,7 @@ struct SummaryOptionsView: View {
             HStack {
                 Button("Cancel", action: onCancel)
                 Spacer()
-                Button(queueIsActive ? "Add to Queue" : "Generate Summary") {
+                Button(startButtonTitle) {
                     onStart(SummarizerOptions(flow: flow, language: language))
                 }
                 .keyboardShortcut(.defaultAction)
@@ -65,22 +71,40 @@ struct SummaryOptionsView: View {
         .padding(24)
         .frame(width: 420)
     }
+
+    private var title: String {
+        if regenerate {
+            return recordingIDs.count > 1 ? "Re-summarize \(recordingIDs.count) recordings" : "Re-summarize"
+        }
+        return recordingIDs.count > 1 ? "Summarize \(recordingIDs.count) recordings" : "Summarize"
+    }
+
+    private var startButtonTitle: String {
+        if queueIsActive {
+            return "Add to Queue"
+        }
+        return recordingIDs.count > 1 ? "Start Queue" : "Generate Summary"
+    }
 }
 
 struct PublishConfirmationView: View {
-    let recording: RecordingRecord?
-    let variantID: String
+    let items: [PublishRequestItem]
+    let sampleRecording: RecordingRecord?
     let onCancel: () -> Void
     let onPublish: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Send to Notion")
+            Text(title)
                 .font(.title3.bold())
 
-            if let recording,
-               let variant = recording.summaryVariants.first(where: { $0.id == variantID }) {
-                Text("Publish \(variant.flow.label) (\(variant.language.label)) for “\(recording.title)”")
+            if items.count == 1,
+               let sampleRecording,
+               let variant = sampleRecording.summaryVariants.first(where: { $0.id == items[0].variantID }) {
+                Text("Publish \(variant.flow.label) (\(variant.language.label)) for “\(sampleRecording.title)”")
+                    .foregroundStyle(.secondary)
+            } else if items.count > 1 {
+                Text("\(items.count) recordings")
                     .foregroundStyle(.secondary)
             }
 
@@ -91,11 +115,19 @@ struct PublishConfirmationView: View {
             HStack {
                 Button("Cancel", action: onCancel)
                 Spacer()
-                Button("Publish", action: onPublish)
+                Button(publishButtonTitle, action: onPublish)
                     .keyboardShortcut(.defaultAction)
             }
         }
         .padding(24)
         .frame(width: 420)
+    }
+
+    private var title: String {
+        items.count > 1 ? "Send \(items.count) to Notion" : "Send to Notion"
+    }
+
+    private var publishButtonTitle: String {
+        items.count > 1 ? "Publish \(items.count)" : "Publish"
     }
 }

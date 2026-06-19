@@ -53,36 +53,48 @@ struct ContentView: View {
                 onCancel: { appState.pendingTranscriptionRequest = nil },
                 onStart: { options in
                     appState.pendingTranscriptionRequest = nil
-                    if let recordingID = recordingID(for: request.urls.first) {
-                        appState.enqueueTranscription(recordingID: recordingID, options: options)
+                    switch request {
+                    case .files(let urls, _):
+                        if let recordingID = recordingID(for: urls.first) {
+                            appState.enqueueTranscription(recordingID: recordingID, options: options)
+                        }
+                    case .recordingIDs(let ids, _):
+                        for id in ids {
+                            appState.enqueueTranscription(recordingID: id, options: options)
+                        }
                     }
                 }
             )
         }
         .sheet(item: $appState.summaryRequest) { request in
             SummaryOptionsView(
-                recording: appState.recordings.first { $0.id == request.recordingID },
+                recordingIDs: request.recordingIDs,
+                sampleRecording: appState.recordings.first { $0.id == request.recordingIDs.first },
                 regenerate: request.regenerate,
                 queueIsActive: appState.isSummaryActive,
                 onCancel: { appState.summaryRequest = nil },
                 onStart: { options in
                     appState.summaryRequest = nil
-                    appState.enqueueSummary(
-                        recordingID: request.recordingID,
-                        options: options,
-                        regenerate: request.regenerate
-                    )
+                    for id in request.recordingIDs {
+                        appState.enqueueSummary(
+                            recordingID: id,
+                            options: options,
+                            regenerate: request.regenerate
+                        )
+                    }
                 }
             )
         }
         .sheet(item: $appState.publishRequest) { request in
             PublishConfirmationView(
-                recording: appState.recordings.first { $0.id == request.recordingID },
-                variantID: request.variantID,
+                items: request.items,
+                sampleRecording: appState.recordings.first { $0.id == request.items.first?.recordingID },
                 onCancel: { appState.publishRequest = nil },
                 onPublish: {
                     appState.publishRequest = nil
-                    appState.enqueuePublish(recordingID: request.recordingID, variantID: request.variantID)
+                    for item in request.items {
+                        appState.enqueuePublish(recordingID: item.recordingID, variantID: item.variantID)
+                    }
                 }
             )
         }
@@ -102,11 +114,6 @@ struct ContentView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(appState.errorMessage ?? "")
-        }
-        .alert("Success", isPresented: successBinding) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(appState.successMessage ?? "")
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             appState.refreshInbox()
@@ -147,13 +154,6 @@ struct ContentView: View {
         Binding(
             get: { appState.errorMessage != nil },
             set: { if !$0 { appState.errorMessage = nil } }
-        )
-    }
-
-    private var successBinding: Binding<Bool> {
-        Binding(
-            get: { appState.successMessage != nil },
-            set: { if !$0 { appState.successMessage = nil } }
         )
     }
 

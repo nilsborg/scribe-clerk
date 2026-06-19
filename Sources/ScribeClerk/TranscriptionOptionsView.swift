@@ -2,17 +2,20 @@ import SwiftUI
 
 enum TranscriptionRequest: Identifiable {
     case files([URL], title: String)
+    case recordingIDs([String], title: String)
 
     var id: String {
         switch self {
         case .files(let urls, _):
             return urls.map(\.absoluteString).joined(separator: "|")
+        case .recordingIDs(let ids, _):
+            return ids.joined(separator: "|")
         }
     }
 
     var title: String {
         switch self {
-        case .files(_, let title):
+        case .files(_, let title), .recordingIDs(_, let title):
             return title
         }
     }
@@ -21,6 +24,17 @@ enum TranscriptionRequest: Identifiable {
         switch self {
         case .files(let urls, _):
             return urls
+        case .recordingIDs:
+            return []
+        }
+    }
+
+    var recordingCount: Int {
+        switch self {
+        case .files(let urls, _):
+            return urls.count
+        case .recordingIDs(let ids, _):
+            return ids.count
         }
     }
 }
@@ -136,6 +150,6 @@ struct TranscriptionOptionsView: View {
         if queueIsActive {
             return "Add to Queue"
         }
-        return request.urls.count > 1 ? "Start Queue" : "Transcribe"
+        return request.recordingCount > 1 ? "Start Queue" : "Transcribe"
     }
 }

@@ -25,12 +25,34 @@ struct DuplicateImportPrompt: Identifiable {
 
 struct SummaryRequest: Identifiable {
     let id = UUID()
-    let recordingID: String
+    let recordingIDs: [String]
     let regenerate: Bool
+
+    init(recordingID: String, regenerate: Bool) {
+        self.recordingIDs = [recordingID]
+        self.regenerate = regenerate
+    }
+
+    init(recordingIDs: [String], regenerate: Bool) {
+        self.recordingIDs = recordingIDs
+        self.regenerate = regenerate
+    }
+}
+
+struct PublishRequestItem: Equatable {
+    let recordingID: String
+    let variantID: String
 }
 
 struct PublishRequest: Identifiable {
     let id = UUID()
-    let recordingID: String
-    let variantID: String
+    let items: [PublishRequestItem]
+
+    init(recordingID: String, variantID: String) {
+        self.items = [PublishRequestItem(recordingID: recordingID, variantID: variantID)]
+    }
+
+    init(items: [PublishRequestItem]) {
+        self.items = items
+    }
 }

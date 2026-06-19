@@ -5,10 +5,8 @@ struct MultiSelectionView: View {
     @ObservedObject var appState: AppState
     @State private var showDeleteConfirmation = false
 
-    private var transcribableCount: Int {
-        recordings.filter {
-            $0.transcriptionStatus != .inProgress && $0.transcriptionStatus != .queued
-        }.count
+    private var actions: BulkRecordingActions.Availability {
+        BulkRecordingActions.availability(for: recordings)
     }
 
     var body: some View {
@@ -24,12 +22,45 @@ struct MultiSelectionView: View {
             Divider()
 
             HStack(spacing: 10) {
-                Button {
-                    appState.transcribeRecordings(recordings.map(\.id))
-                } label: {
-                    Label("Transcribe \(transcribableCount)", systemImage: "waveform")
+                if !actions.transcribeIDs.isEmpty {
+                    Button {
+                        appState.beginBulkTranscription(for: actions.transcribeIDs)
+                    } label: {
+                        Label("Transcribe \(actions.transcribeIDs.count)", systemImage: "waveform")
+                    }
                 }
-                .disabled(transcribableCount == 0)
+
+                if !actions.summarizeIDs.isEmpty {
+                    Button {
+                        appState.beginBulkSummary(for: actions.summarizeIDs)
+                    } label: {
+                        Label("Summarize \(actions.summarizeIDs.count)", systemImage: "text.append")
+                    }
+                }
+
+                if !actions.resummarizeIDs.isEmpty {
+                    Button {
+                        appState.beginBulkSummary(for: actions.resummarizeIDs, regenerate: true)
+                    } label: {
+                        Label("Re-summarize \(actions.resummarizeIDs.count)", systemImage: "text.append")
+                    }
+                }
+
+                if !actions.publishItems.isEmpty {
+                    Button {
+                        appState.beginBulkPublish(items: actions.publishItems)
+                    } label: {
+                        Label("Send to Notion \(actions.publishItems.count)", systemImage: "paperplane")
+                    }
+                }
+
+                if !actions.republishItems.isEmpty {
+                    Button {
+                        appState.beginBulkPublish(items: actions.republishItems)
+                    } label: {
+                        Label("Re-publish \(actions.republishItems.count)", systemImage: "paperplane")
+                    }
+                }
 
                 Spacer()
 
