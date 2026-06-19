@@ -17,10 +17,16 @@ struct QueuedPublishItem: Equatable {
 }
 
 struct DuplicateImportPrompt: Identifiable {
+    enum ImportKind {
+        case audio
+        case transcription
+    }
+
     let id = UUID()
     let existing: RecordingRecord
     let pendingURLs: [URL]
     let source: RecordingSource
+    let importKind: ImportKind
 }
 
 struct SummaryRequest: Identifiable {

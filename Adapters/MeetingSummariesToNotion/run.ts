@@ -73,7 +73,15 @@ const envFilePath = Deno.env.get("ADAPTER_ENV_FILE") ?? `${ADAPTER_ROOT}/.env`;
 const env = config({ path: envFilePath }) as Record<string, string>;
 
 function resolveEnv(key: string): string | undefined {
-  return env[key] ?? Deno.env.get(key);
+  const value = env[key] ?? Deno.env.get(key);
+  if (!value) return undefined;
+
+  const normalized = value.trim().replace(/^["']|["']$/g, "");
+  if (!normalized || normalized === "xxx") {
+    return undefined;
+  }
+
+  return normalized;
 }
 
 function parseFlow(value: string | undefined): FlowKey {

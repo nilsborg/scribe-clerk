@@ -58,6 +58,7 @@ struct AdapterPaths {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+            .deletingLastPathComponent()
             .appendingPathComponent("Adapters/MeetingSummariesToNotion", isDirectory: true)
 
         if FileManager.default.fileExists(atPath: repoAdapter.appendingPathComponent("run.ts").path) {

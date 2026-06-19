@@ -38,7 +38,7 @@ struct ContentView: View {
         }
         .fileImporter(
             isPresented: $showFileImporter,
-            allowedContentTypes: AudioFileFilter.acceptedTypes,
+            allowedContentTypes: ImportFileTypes.accepted,
             allowsMultipleSelection: true
         ) { result in
             if case .success(let urls) = result {
@@ -125,10 +125,10 @@ struct ContentView: View {
 
     private var emptyState: some View {
         AudioDropZone(
-            title: "Drop audio into the inbox",
-            subtitle: "New files land in the inbox. Import them into your library when you're ready."
+            title: "Drop audio or transcripts",
+            subtitle: "Audio files land in the inbox. VTT, SRT, and text transcripts import directly into your library."
         ) { urls in
-            appState.addFilesToInbox(urls)
+            appState.receiveDroppedFiles(urls)
         }
     }
 
@@ -137,7 +137,7 @@ struct ContentView: View {
             let urls = await DroppedFileLoader.loadURLs(from: providers)
             guard !urls.isEmpty else { return }
             await MainActor.run {
-                appState.addFilesToInbox(urls)
+                appState.receiveDroppedFiles(urls)
             }
         }
         return true

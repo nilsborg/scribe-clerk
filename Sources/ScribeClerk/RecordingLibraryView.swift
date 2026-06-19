@@ -156,7 +156,7 @@ private struct RecordingSidebarRow: View {
     let recording: RecordingRecord
     @ObservedObject var appState: AppState
 
-    private var audioURL: URL {
+    private var audioURL: URL? {
         RecordingStore.shared.audioURL(for: recording)
     }
 

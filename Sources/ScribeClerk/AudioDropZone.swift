@@ -2,8 +2,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct AudioDropZone: View {
-    var title: String = "Drop audio files here"
-    var subtitle: String = "Transcribe locally with Whisper — any audio file"
+    var title: String = "Drop files here"
+    var subtitle: String = "Audio files go to the inbox. VTT, SRT, and text transcripts import directly."
     var inset: CGFloat = 32
     var onFiles: ([URL]) -> Void
 
@@ -48,15 +48,13 @@ struct AudioDropZone: View {
         .onDrop(of: AudioDropTypes.accepted, isTargeted: $isTargeted, perform: handleDrop)
         .fileImporter(
             isPresented: $showImporter,
-            allowedContentTypes: AudioFileFilter.acceptedTypes,
+            allowedContentTypes: ImportFileTypes.accepted,
             allowsMultipleSelection: true
         ) { result in
             switch result {
             case .success(let urls):
-                let audioFiles = AudioFileFilter.filter(urls)
-                if !audioFiles.isEmpty {
-                    onFiles(audioFiles)
-                }
+                guard !urls.isEmpty else { return }
+                onFiles(urls)
             case .failure:
                 break
             }
@@ -66,11 +64,10 @@ struct AudioDropZone: View {
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
         Task {
             let urls = await DroppedFileLoader.loadURLs(from: providers)
-            let audioFiles = AudioFileFilter.filter(urls)
-            guard !audioFiles.isEmpty else { return }
+            guard !urls.isEmpty else { return }
 
             await MainActor.run {
-                onFiles(audioFiles)
+                onFiles(urls)
             }
         }
 

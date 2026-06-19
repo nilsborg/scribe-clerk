@@ -4,6 +4,7 @@ enum RecordingSource: String, Codable, CaseIterable {
     case inbox
     case dragDrop = "drag-drop"
     case filePicker = "file-picker"
+    case transcriptImport = "transcript-import"
 
     var label: String {
         switch self {
@@ -13,6 +14,8 @@ enum RecordingSource: String, Codable, CaseIterable {
             return "Drag & Drop"
         case .filePicker:
             return "File Picker"
+        case .transcriptImport:
+            return "Imported Transcript"
         }
     }
 }
@@ -104,7 +107,7 @@ struct RecordingRecord: Codable, Identifiable, Equatable {
     var recordedAt: Date?
     var source: RecordingSource
     var contentHash: String
-    var audioFileName: String
+    var audioFileName: String?
     var audioDurationSeconds: TimeInterval?
     var transcriptionStatus: RecordingTranscriptionStatus
     var transcriptionError: String?
@@ -122,8 +125,16 @@ struct RecordingRecord: Codable, Identifiable, Equatable {
         AudioDuration.formatted(seconds: audioDurationSeconds)
     }
 
-    func resolvedAudioDuration(from audioURL: URL) -> String? {
-        formattedAudioDuration ?? AudioDuration.formatted(for: audioURL)
+    var hasAudio: Bool {
+        audioFileName != nil
+    }
+
+    func resolvedAudioDuration(from audioURL: URL?) -> String? {
+        if let formattedAudioDuration {
+            return formattedAudioDuration
+        }
+        guard let audioURL else { return nil }
+        return AudioDuration.formatted(for: audioURL)
     }
 
     func transcriptionOptions(defaultModelPath: String) -> TranscriptionOptions? {
@@ -168,6 +179,7 @@ enum RecordingFilterSource: String, CaseIterable, Identifiable {
     case inbox
     case dragDrop = "drag-drop"
     case filePicker = "file-picker"
+    case transcriptImport = "transcript-import"
 
     var id: String { rawValue }
 
@@ -181,6 +193,8 @@ enum RecordingFilterSource: String, CaseIterable, Identifiable {
             return "Drag & Drop"
         case .filePicker:
             return "File Picker"
+        case .transcriptImport:
+            return "Imported Transcripts"
         }
     }
 }

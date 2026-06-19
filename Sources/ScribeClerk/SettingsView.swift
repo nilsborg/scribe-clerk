@@ -24,8 +24,10 @@ struct SettingsView: View {
                     }
                 }
 
-                Button("Open .env in Editor") {
-                    AppSupportPaths.openInDefaultEditor(URL(fileURLWithPath: adapterEnvPath))
+                Button("Open .env in TextEdit") {
+                    let envURL = URL(fileURLWithPath: AppSettings.shared.adapterEnvPath)
+                    AppSupportPaths.openInDefaultEditor(envURL)
+                    adapterEnvPath = AppSettings.shared.adapterEnvPath
                 }
 
                 Button("Reveal Adapter Folder") {
@@ -46,6 +48,10 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .padding(20)
         .frame(width: 540, height: 420)
+        .onAppear {
+            let resolved = AppSettings.shared.adapterEnvPath
+            adapterEnvPath = resolved
+        }
         .onChange(of: whisperPath) { _, newValue in
             AppSettings.shared.whisperBinaryPath = newValue
         }

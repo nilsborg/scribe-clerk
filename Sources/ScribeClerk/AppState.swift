@@ -129,15 +129,36 @@ final class AppState: ObservableObject {
     }
 
     func addFilesToInbox(_ urls: [URL]) {
+        receiveImportedFiles(urls, source: .filePicker)
+    }
+
+    func receiveDroppedFiles(_ urls: [URL]) {
+        receiveImportedFiles(urls, source: .dragDrop)
+    }
+
+    private func receiveImportedFiles(_ urls: [URL], source: RecordingSource) {
         let audioFiles = AudioFileFilter.filter(urls)
-        guard !audioFiles.isEmpty else {
-            errorMessage = "No supported audio files were found."
+        let transcriptionFiles = TranscriptionFileFilter.filter(urls)
+
+        guard !audioFiles.isEmpty || !transcriptionFiles.isEmpty else {
+            errorMessage = "No supported audio or transcription files were found."
             return
         }
 
         NSApp.activate(ignoringOtherApps: true)
-        library.addToInbox(audioFiles)
-        refreshInbox()
+
+        if !audioFiles.isEmpty {
+            if source == .dragDrop || source == .filePicker {
+                library.addToInbox(audioFiles)
+                refreshInbox()
+            } else {
+                receiveAudioFiles(audioFiles, source: source)
+            }
+        }
+
+        if !transcriptionFiles.isEmpty {
+            receiveTranscriptionFiles(transcriptionFiles, source: .transcriptImport)
+        }
     }
 
     func receiveAudioFiles(_ urls: [URL], source: RecordingSource) {
@@ -161,7 +182,37 @@ final class AppState: ObservableObject {
             duplicateImportPrompt = DuplicateImportPrompt(
                 existing: existing,
                 pendingURLs: audioFiles,
-                source: source
+                source: source,
+                importKind: .audio
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func receiveTranscriptionFiles(_ urls: [URL], source: RecordingSource) {
+        let transcriptionFiles = TranscriptionFileFilter.filter(urls)
+        guard !transcriptionFiles.isEmpty else {
+            errorMessage = "No supported transcription files were found."
+            return
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+
+        do {
+            let results = try library.importTranscriptionFiles(transcriptionFiles, source: source)
+            for result in results {
+                upsertRecording(result.record)
+            }
+            if let first = results.first {
+                selectRecording(first.record.id)
+            }
+        } catch RecordingLibraryError.duplicateFound(let existing) {
+            duplicateImportPrompt = DuplicateImportPrompt(
+                existing: existing,
+                pendingURLs: transcriptionFiles,
+                source: source,
+                importKind: .transcription
             )
         } catch {
             errorMessage = error.localizedDescription
@@ -178,21 +229,38 @@ final class AppState: ObservableObject {
         }
 
         do {
-            if prompt.source == .inbox, let url = prompt.pendingURLs.first {
-                let item = InboxItem(
-                    id: url.standardizedFileURL.path,
-                    url: url,
-                    displayName: url.deletingPathExtension().lastPathComponent,
-                    modifiedAt: Date(),
-                    contentHash: try library.contentHash(for: url),
-                    duration: AudioDuration.seconds(for: url)
+            switch prompt.importKind {
+            case .audio:
+                if prompt.source == .inbox, let url = prompt.pendingURLs.first {
+                    let item = InboxItem(
+                        id: url.standardizedFileURL.path,
+                        url: url,
+                        displayName: url.deletingPathExtension().lastPathComponent,
+                        modifiedAt: Date(),
+                        contentHash: try library.contentHash(for: url),
+                        duration: AudioDuration.seconds(for: url)
+                    )
+                    let result = try library.importFromInbox(item, allowDuplicate: true)
+                    upsertRecording(result.record)
+                    selectRecording(result.record.id)
+                    refreshInbox()
+                } else {
+                    let results = try library.importAudioFiles(
+                        prompt.pendingURLs,
+                        source: prompt.source,
+                        allowDuplicate: true
+                    )
+                    for result in results {
+                        upsertRecording(result.record)
+                    }
+                    selectRecording(results.first?.record.id)
+                }
+            case .transcription:
+                let results = try library.importTranscriptionFiles(
+                    prompt.pendingURLs,
+                    source: prompt.source,
+                    allowDuplicate: true
                 )
-                let result = try library.importFromInbox(item, allowDuplicate: true)
-                upsertRecording(result.record)
-                selectRecording(result.record.id)
-                refreshInbox()
-            } else {
-                let results = try library.importAudioFiles(prompt.pendingURLs, source: prompt.source, allowDuplicate: true)
                 for result in results {
                     upsertRecording(result.record)
                 }
@@ -221,7 +289,8 @@ final class AppState: ObservableObject {
                 duplicateImportPrompt = DuplicateImportPrompt(
                     existing: existing,
                     pendingURLs: [item.url],
-                    source: .inbox
+                    source: .inbox,
+                    importKind: .audio
                 )
                 break
             } catch {
@@ -263,6 +332,7 @@ final class AppState: ObservableObject {
     func beginBulkTranscription(for recordingIDs: [String]) {
         let eligible = recordingIDs.filter { id in
             guard let record = recordings.first(where: { $0.id == id }),
+                  record.hasAudio,
                   audioURL(for: record) != nil else { return false }
             return record.transcriptionStatus != .inProgress && record.transcriptionStatus != .queued
         }
@@ -508,7 +578,7 @@ final class AppState: ObservableObject {
     }
 
     func audioURL(for record: RecordingRecord) -> URL? {
-        let url = store.audioURL(for: record)
+        guard let url = store.audioURL(for: record) else { return nil }
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
@@ -576,6 +646,8 @@ final class AppState: ObservableObject {
             return record.source == .dragDrop
         case .filePicker:
             return record.source == .filePicker
+        case .transcriptImport:
+            return record.source == .transcriptImport
         }
     }
 

@@ -10,7 +10,7 @@ enum RecordingLibraryError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unsupportedFile:
-            return "The selected file is not a supported audio format."
+            return "The selected file is not a supported audio or transcription format."
         case .importFailed(let message):
             return message
         case .duplicateFound(let existing):
@@ -102,6 +102,64 @@ struct RecordingLibrary {
         }
     }
 
+    func importTranscriptionFiles(
+        _ urls: [URL],
+        source: RecordingSource,
+        allowDuplicate: Bool = false
+    ) throws -> [RecordingImportResult] {
+        try urls.map { url in
+            try importTranscription(
+                from: url,
+                source: source,
+                title: url.deletingPathExtension().lastPathComponent,
+                allowDuplicate: allowDuplicate
+            )
+        }
+    }
+
+    func importTranscription(
+        from sourceURL: URL,
+        source: RecordingSource,
+        title: String,
+        allowDuplicate: Bool
+    ) throws -> RecordingImportResult {
+        guard TranscriptionFileFilter.isTranscriptionFile(sourceURL) else {
+            throw RecordingLibraryError.unsupportedFile
+        }
+
+        let parsed = try TranscriptionFileParser.parse(url: sourceURL)
+        let hash = try contentHash(for: Data(parsed.text.utf8))
+        if let existing = store.recording(withContentHash: hash), !allowDuplicate {
+            throw RecordingLibraryError.duplicateFound(existing)
+        }
+
+        let id = UUID().uuidString
+        let directory = store.recordingDirectory(for: id)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        var record = RecordingRecord(
+            id: id,
+            title: title,
+            importedAt: Date(),
+            recordedAt: fileModificationDate(for: sourceURL),
+            source: source,
+            contentHash: hash,
+            audioFileName: nil,
+            audioDurationSeconds: parsed.durationSeconds,
+            transcriptionStatus: .completed,
+            transcriptionError: nil,
+            transcriptionLanguage: "unknown",
+            transcriptionModelPath: "imported",
+            transcribedAt: Date(),
+            transcriptFileName: nil,
+            summaryVariants: []
+        )
+
+        _ = try store.writeTranscript(parsed.text, for: &record)
+        try store.save(record)
+        return RecordingImportResult(record: record, wasDuplicate: false)
+    }
+
     func importAudio(
         from sourceURL: URL,
         source: RecordingSource,
@@ -158,6 +216,10 @@ struct RecordingLibrary {
 
     func contentHash(for url: URL) throws -> String {
         let data = try Data(contentsOf: url)
+        return try contentHash(for: data)
+    }
+
+    func contentHash(for data: Data) throws -> String {
         let digest = SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
     }

@@ -13,7 +13,8 @@ struct BulkRecordingActions {
         var result = Availability()
 
         for recording in recordings {
-            if recording.transcriptionStatus != .inProgress,
+            if recording.hasAudio,
+               recording.transcriptionStatus != .inProgress,
                recording.transcriptionStatus != .queued {
                 result.transcribeIDs.append(recording.id)
             }

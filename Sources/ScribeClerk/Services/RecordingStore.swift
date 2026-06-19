@@ -27,8 +27,9 @@ struct RecordingStore {
         recordingDirectory(for: id).appendingPathComponent(metadataFileName)
     }
 
-    func audioURL(for record: RecordingRecord) -> URL {
-        recordingDirectory(for: record.id).appendingPathComponent(record.audioFileName)
+    func audioURL(for record: RecordingRecord) -> URL? {
+        guard let audioFileName = record.audioFileName else { return nil }
+        return recordingDirectory(for: record.id).appendingPathComponent(audioFileName)
     }
 
     func transcriptURL(for record: RecordingRecord) -> URL? {

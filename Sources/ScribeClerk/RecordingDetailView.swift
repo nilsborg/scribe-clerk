@@ -115,7 +115,7 @@ struct RecordingDetailView: View {
             primaryActionButton
 
             Menu {
-                if recording.transcriptionStatus == .completed {
+                if recording.transcriptionStatus == .completed, recording.hasAudio {
                     Button {
                         appState.beginTranscription(for: recording.id)
                     } label: {
@@ -380,6 +380,25 @@ private struct SummaryVariantCard: View {
     @State private var draftMarkdown: String = ""
     @State private var showHistory = false
 
+    private var isPublishable: Bool {
+        [.ready, .stale, .published, .failed].contains(variant.status)
+    }
+
+    private var isPublishing: Bool {
+        recording.summaryVariants.contains { $0.status == .publishing }
+    }
+
+    private var publishButtonTitle: String {
+        switch variant.status {
+        case .published:
+            return "Re-publish"
+        case .failed:
+            return "Retry Publish"
+        default:
+            return "Send to Notion"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -420,6 +439,19 @@ private struct SummaryVariantCard: View {
                             markdown: draftMarkdown
                         )
                     }
+                }
+            }
+
+            if isPublishable {
+                HStack {
+                    Spacer()
+                    Button {
+                        appState.beginPublish(recordingID: recording.id, variantID: variant.id)
+                    } label: {
+                        Label(publishButtonTitle, systemImage: "paperplane")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isPublishing)
                 }
             }
 
@@ -466,6 +498,16 @@ private struct RecordingWorkflow {
             step = .inProgress
             primaryActionTitle = recording.transcriptionStatus == .queued ? "Queued…" : "Transcribing…"
             primaryActionIcon = "waveform"
+            latestNotionURL = Self.notionURL(from: recording)
+            return
+        }
+
+        if !recording.hasAudio,
+           recording.transcriptionStatus == .completed,
+           Self.needsFirstSummary(recording) {
+            step = .needsSummary
+            primaryActionTitle = "Summarize"
+            primaryActionIcon = "text.append"
             latestNotionURL = Self.notionURL(from: recording)
             return
         }
@@ -542,6 +584,13 @@ private struct RecordingWorkflow {
             return ready
         }
         return recording.summaryVariants.first
+    }
+
+    private static func needsFirstSummary(_ recording: RecordingRecord) -> Bool {
+        recording.summaryVariants.isEmpty
+            || recording.summaryVariants.allSatisfy {
+                $0.status == .notStarted || ($0.status == .failed && $0.markdownFileName == nil)
+            }
     }
 
     private static func notionURL(from recording: RecordingRecord) -> String? {

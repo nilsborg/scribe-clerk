@@ -61,24 +61,113 @@ enum AppSupportPaths {
         directory(named: "config").appendingPathComponent("adapter.env")
     }
 
+    static func migrateAdapterEnvIfNeeded() -> URL {
+        let canonical = adapterEnvURL
+        let fileManager = FileManager.default
+
+        let sources = adapterEnvMigrationSources()
+        let configuredSource = sources.first { hasConfiguredAdapterCredentials(at: $0) }
+
+        if let configuredSource,
+           !configuredSource.standardizedFileURL.path.elementsEqual(canonical.standardizedFileURL.path),
+           let data = try? Data(contentsOf: configuredSource) {
+            try? fileManager.createDirectory(
+                at: canonical.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try? data.write(to: canonical, options: .atomic)
+        }
+
+        return ensureAdapterEnvFile(at: canonical)
+    }
+
+    static func resolvedAdapterEnvPath() -> String {
+        let canonical = adapterEnvURL
+
+        if let saved = UserDefaults.standard.string(forKey: "adapterEnvPath") {
+            let savedURL = URL(fileURLWithPath: saved)
+            if fileManager.fileExists(atPath: savedURL.path),
+               hasConfiguredAdapterCredentials(at: savedURL) {
+                return savedURL.path
+            }
+        }
+
+        for candidate in adapterEnvMigrationSources() + [canonical] {
+            if hasConfiguredAdapterCredentials(at: candidate) {
+                return candidate.path
+            }
+        }
+
+        return migrateAdapterEnvIfNeeded().path
+    }
+
+    static func ensureAdapterEnvFile(at url: URL = adapterEnvURL) -> URL {
+        let fileManager = FileManager.default
+        let directory = url.deletingLastPathComponent()
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        guard !fileManager.fileExists(atPath: url.path) else { return url }
+
+        let configuredCandidates = adapterEnvMigrationSources()
+        if let configured = configuredCandidates.first(where: { hasConfiguredAdapterCredentials(at: $0) }) {
+            try? fileManager.copyItem(at: configured, to: url)
+            return url
+        }
+
+        let exampleCandidates = [
+            directory.appendingPathComponent(".env.example"),
+            AdapterPaths.meetingSummariesToNotionRoot.appendingPathComponent(".env.example"),
+        ]
+
+        if let example = exampleCandidates.first(where: { fileManager.fileExists(atPath: $0.path) }) {
+            try? fileManager.copyItem(at: example, to: url)
+            return url
+        }
+
+        let template = """
+        OPENROUTER_API_KEY=""
+        NOTION_API_KEY=""
+        NOTION_MEETING_DATABASE_ID=""
+        NOTION_USER_ID=""
+        NOTION_PROJECT_UPDATES_DATABASE_ID=""
+        """
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .joined(separator: "\n")
+            + "\n"
+        try? template.data(using: .utf8)?.write(to: url, options: .atomic)
+        return url
+    }
+
     static func revealInFinder(_ url: URL) {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     static func openInDefaultEditor(_ url: URL) {
-        let fileManager = FileManager.default
-        if !fileManager.fileExists(atPath: url.path) {
-            let exampleCandidates = [
-                url.deletingLastPathComponent().appendingPathComponent(".env.example"),
-                AdapterPaths.envFileURL.deletingLastPathComponent().appendingPathComponent(".env.example"),
-            ]
-            if let example = exampleCandidates.first(where: { fileManager.fileExists(atPath: $0.path) }) {
-                try? fileManager.copyItem(at: example, to: url)
-            } else {
-                fileManager.createFile(atPath: url.path, contents: nil)
+        _ = migrateAdapterEnvIfNeeded()
+        let fileURL = URL(fileURLWithPath: resolvedAdapterEnvPath())
+
+        if let textEditURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.TextEdit") {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            NSWorkspace.shared.open(
+                [fileURL],
+                withApplicationAt: textEditURL,
+                configuration: configuration
+            ) { _, error in
+                if error != nil {
+                    DispatchQueue.main.async {
+                        revealInFinder(fileURL.deletingLastPathComponent())
+                    }
+                }
             }
+            return
         }
-        NSWorkspace.shared.open(url)
+
+        let opened = NSWorkspace.shared.open(fileURL)
+        if !opened {
+            revealInFinder(fileURL.deletingLastPathComponent())
+        }
     }
 
     private static func mergeContents(from source: URL, into destination: URL) {
@@ -94,5 +183,48 @@ enum AppSupportPaths {
             }
             try? fileManager.moveItem(at: file, to: target)
         }
+    }
+
+    private static var fileManager: FileManager { .default }
+
+    private static func adapterEnvMigrationSources() -> [URL] {
+        var urls: [URL] = []
+
+        let repoEnv = AdapterPaths.envFileURL
+        urls.append(repoEnv)
+
+        let flatSupportEnv = applicationSupportRoot.appendingPathComponent("adapter.env")
+        urls.append(flatSupportEnv)
+
+        if let saved = UserDefaults.standard.string(forKey: "adapterEnvPath") {
+            urls.append(URL(fileURLWithPath: saved))
+        }
+
+        var seen = Set<String>()
+        return urls.filter { url in
+            let path = url.standardizedFileURL.path
+            guard seen.insert(path).inserted else { return false }
+            return fileManager.fileExists(atPath: path)
+        }
+    }
+
+    private static func hasConfiguredAdapterCredentials(at url: URL) -> Bool {
+        guard let contents = try? String(contentsOf: url, encoding: .utf8) else { return false }
+
+        for line in contents.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("OPENROUTER_API_KEY") else { continue }
+            guard let value = trimmed.split(separator: "=", maxSplits: 1).last else { return false }
+            return isConfiguredEnvValue(String(value))
+        }
+
+        return false
+    }
+
+    private static func isConfiguredEnvValue(_ raw: String) -> Bool {
+        let value = raw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        return !value.isEmpty && value != "xxx"
     }
 }

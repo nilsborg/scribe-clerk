@@ -55,17 +55,7 @@ final class AppSettings {
 
     var adapterEnvPath: String {
         get {
-            if let value = defaults.string(forKey: Keys.adapterEnvPath),
-               FileManager.default.fileExists(atPath: value) {
-                return value
-            }
-
-            let repoEnv = AdapterPaths.envFileURL
-            if FileManager.default.fileExists(atPath: repoEnv.path) {
-                return repoEnv.path
-            }
-
-            return AppSupportPaths.adapterEnvURL.path
+            AppSupportPaths.resolvedAdapterEnvPath()
         }
         set {
             defaults.set(newValue, forKey: Keys.adapterEnvPath)
