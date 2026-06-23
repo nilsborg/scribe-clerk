@@ -34,9 +34,11 @@ final class AppState: ObservableObject {
     private var transcriptionQueue: [QueuedTranscriptionItem] = []
     private var summaryQueue: [QueuedSummaryItem] = []
     private var publishQueue: [QueuedPublishItem] = []
+    private var titleQueue: [String] = []
     private var transcriptionTask: Task<Void, Never>?
     private var summaryTask: Task<Void, Never>?
     private var publishTask: Task<Void, Never>?
+    private var titleTask: Task<Void, Never>?
     private var stopTranscriptionRequested = false
     private var stopSummaryRequested = false
     private var stopPublishRequested = false
@@ -61,6 +63,10 @@ final class AppState: ObservableObject {
         recordings.filter { record in
             matchesSearch(record) && matchesSource(record) && matchesStatus(record)
         }
+    }
+
+    var groupedRecordings: [RecordingSidebarSection] {
+        RecordingSidebarGrouping.sections(for: filteredRecordings)
     }
 
     var selectedRecordingID: String? {
@@ -203,6 +209,7 @@ final class AppState: ObservableObject {
             let results = try library.importTranscriptionFiles(transcriptionFiles, source: source)
             for result in results {
                 upsertRecording(result.record)
+                enqueueTitleGeneration(for: result.record.id)
             }
             if let first = results.first {
                 selectRecording(first.record.id)
@@ -263,6 +270,7 @@ final class AppState: ObservableObject {
                 )
                 for result in results {
                     upsertRecording(result.record)
+                    enqueueTitleGeneration(for: result.record.id)
                 }
                 selectRecording(results.first?.record.id)
             }
@@ -610,7 +618,12 @@ final class AppState: ObservableObject {
         } else {
             recordings.insert(record, at: 0)
         }
-        recordings.sort { $0.importedAt > $1.importedAt }
+        recordings.sort {
+            if $0.displayDate != $1.displayDate {
+                return $0.displayDate > $1.displayDate
+            }
+            return $0.importedAt > $1.importedAt
+        }
     }
 
     private func persist(_ record: RecordingRecord) {
@@ -706,6 +719,45 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func enqueueTitleGeneration(for recordingID: String) {
+        guard !titleQueue.contains(recordingID) else { return }
+        titleQueue.append(recordingID)
+        startTitleProcessorIfNeeded()
+    }
+
+    private func startTitleProcessorIfNeeded() {
+        guard titleTask == nil else { return }
+        titleTask = Task {
+            await runTitleProcessor()
+            titleTask = nil
+        }
+    }
+
+    private func runTitleProcessor() async {
+        while !titleQueue.isEmpty {
+            if Task.isCancelled { break }
+
+            let recordingID = titleQueue.removeFirst()
+
+            guard let record = recordings.first(where: { $0.id == recordingID }),
+                  record.transcriptionStatus == .completed,
+                  let transcriptURL = store.transcriptURL(for: record) else { continue }
+
+            do {
+                let title = try await adapter.generateTitle(transcriptPath: transcriptURL)
+                guard var updated = recordings.first(where: { $0.id == recordingID }),
+                      updated.transcriptionStatus == .completed else { continue }
+
+                updated.title = title
+                updated.titleGeneratedAt = Date()
+                persist(updated)
+            } catch {
+                // Keep the original filename title if generation fails.
+                continue
+            }
+        }
+    }
+
     private func runTranscriptionProcessor() async {
         while !transcriptionQueue.isEmpty {
             if Task.isCancelled || stopTranscriptionRequested { break }
@@ -749,6 +801,7 @@ final class AppState: ObservableObject {
                 record.markSummariesStale()
                 persist(record)
                 appendWhisperLog("\n# completed successfully\n\n")
+                enqueueTitleGeneration(for: record.id)
                 JobNotification.post(
                     title: "Transcription complete",
                     body: "“\(record.title)” is ready."

@@ -115,6 +115,7 @@ struct RecordingRecord: Codable, Identifiable, Equatable {
     var transcriptionModelPath: String?
     var transcribedAt: Date?
     var transcriptFileName: String?
+    var titleGeneratedAt: Date?
     var summaryVariants: [SummaryVariantRecord]
 
     var displayDate: Date {

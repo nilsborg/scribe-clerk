@@ -5,6 +5,7 @@ export interface OpenRouterSummaryOptions {
   model: string;
   maxTokens?: number;
   temperature?: number;
+  userMessage?: string;
 }
 
 export async function getOpenRouterSummary(
@@ -17,6 +18,7 @@ export async function getOpenRouterSummary(
     model,
     maxTokens = 4096,
     temperature = 0.2,
+    userMessage = "Summarize the following meeting transcript using your system instructions:\n\n",
   } = options;
 
   console.error(`Sending content to OpenRouter (${model}) for summarization...`);
@@ -39,9 +41,7 @@ export async function getOpenRouterSummary(
       },
       {
         role: "user",
-        content:
-          "Summarize the following meeting transcript using your system instructions:\n\n" +
-          content,
+        content: userMessage + content,
       },
     ],
   };

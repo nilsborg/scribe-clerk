@@ -18,6 +18,8 @@ protocol SummaryAdapter {
         options: SummarizerOptions,
         skipCache: Bool
     ) async throws -> SummaryResult
+
+    func generateTitle(transcriptPath: URL) async throws -> String
 }
 
 protocol DeliveryAdapter {
@@ -115,6 +117,22 @@ final class MeetingSummariesToNotionAdapter: SummaryAdapter, DeliveryAdapter {
         )
     }
 
+    func generateTitle(transcriptPath: URL) async throws -> String {
+        let response = try await run(
+            action: "title",
+            transcriptPath: transcriptPath,
+            summaryPath: nil,
+            options: nil,
+            skipCache: false
+        )
+
+        guard response.success, let title = response.title, !title.isEmpty else {
+            throw AdapterError.adapterFailed(response.error ?? "Title generation failed.")
+        }
+
+        return title
+    }
+
     func publish(
         transcriptPath: URL,
         summaryPath: URL,
@@ -139,9 +157,9 @@ final class MeetingSummariesToNotionAdapter: SummaryAdapter, DeliveryAdapter {
     private struct RunRequest: Encodable {
         let action: String
         let transcriptPath: String
-        let summaryPath: String
-        let flow: String
-        let language: String
+        let summaryPath: String?
+        let flow: String?
+        let language: String?
         let skipCache: Bool
     }
 
@@ -157,8 +175,8 @@ final class MeetingSummariesToNotionAdapter: SummaryAdapter, DeliveryAdapter {
     private func run(
         action: String,
         transcriptPath: URL,
-        summaryPath: URL,
-        options: SummarizerOptions,
+        summaryPath: URL?,
+        options: SummarizerOptions?,
         skipCache: Bool
     ) async throws -> RunResponse {
         let settings = AppSettings.shared
@@ -177,9 +195,9 @@ final class MeetingSummariesToNotionAdapter: SummaryAdapter, DeliveryAdapter {
         let request = RunRequest(
             action: action,
             transcriptPath: transcriptPath.path,
-            summaryPath: summaryPath.path,
-            flow: options.flow.rawValue,
-            language: options.language.rawValue,
+            summaryPath: summaryPath?.path,
+            flow: options?.flow.rawValue,
+            language: options?.language.rawValue,
             skipCache: skipCache
         )
 

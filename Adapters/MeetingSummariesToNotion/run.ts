@@ -14,16 +14,17 @@ import {
   applyGermanTitleFlag,
   inferDocumentTitle,
 } from "./functions/inferDocumentTitle.ts";
+import { generateRecordingTitle } from "./functions/generateRecordingTitle.ts";
 import { ADAPTER_ROOT, PROMPT_PATHS } from "./paths.ts";
 
 type FlowKey = keyof typeof PROMPT_PATHS;
 type SummaryLanguage = "english" | "german";
-type RunAction = "summarize" | "publish";
+type RunAction = "summarize" | "publish" | "title";
 
 interface RunRequest {
   action: RunAction;
   transcriptPath: string;
-  summaryPath: string;
+  summaryPath?: string;
   flow?: FlowKey;
   language?: SummaryLanguage;
   skipCache?: boolean;
@@ -118,14 +119,61 @@ async function readRequest(): Promise<RunRequest> {
   const text = await new Response(Deno.stdin.readable).text();
   const parsed = JSON.parse(text) as RunRequest;
 
-  if (!parsed.action || !parsed.transcriptPath || !parsed.summaryPath) {
-    throw new Error("Request must include action, transcriptPath, and summaryPath.");
+  if (!parsed.action || !parsed.transcriptPath) {
+    throw new Error("Request must include action and transcriptPath.");
+  }
+
+  if (parsed.action !== "title" && !parsed.summaryPath) {
+    throw new Error("Request must include summaryPath for summarize and publish actions.");
   }
 
   return parsed;
 }
 
+async function generateTitle(request: RunRequest): Promise<RunResponse> {
+  const openRouterKey = resolveEnv("OPENROUTER_API_KEY");
+
+  if (!openRouterKey) {
+    return { success: false, action: "title", error: "OPENROUTER_API_KEY is not configured." };
+  }
+
+  let transcript: string;
+  try {
+    transcript = await Deno.readTextFile(request.transcriptPath);
+  } catch (error) {
+    return {
+      success: false,
+      action: "title",
+      error: `Could not read transcript: ${error}`,
+    };
+  }
+
+  const fileName = request.transcriptPath.split("/").pop() || "Unknown";
+  const fallback = fileName.replace(/\.[^/.]+$/, "");
+
+  try {
+    const title = await generateRecordingTitle({
+      transcript,
+      apiKey: openRouterKey,
+      fallback,
+    });
+
+    return {
+      success: true,
+      action: "title",
+      title,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      action: "title",
+      error: `Title generation failed: ${error}`,
+    };
+  }
+}
+
 async function summarize(request: RunRequest): Promise<RunResponse> {
+  const summaryPath = request.summaryPath!;
   const flow = parseFlow(request.flow);
   const language = parseLanguage(request.language);
   const flowConfig = FLOW_CONFIGS[flow];
@@ -148,14 +196,14 @@ async function summarize(request: RunRequest): Promise<RunResponse> {
 
   if (!request.skipCache) {
     try {
-      const existing = await Deno.readTextFile(request.summaryPath);
+      const existing = await Deno.readTextFile(summaryPath);
       if (existing.trim().length > 0) {
         const title = inferTitle(existing, request.transcriptPath, flowConfig, language).title;
         return {
           success: true,
           action: "summarize",
           title,
-          summaryPath: request.summaryPath,
+          summaryPath,
         };
       }
     } catch {
@@ -197,11 +245,11 @@ async function summarize(request: RunRequest): Promise<RunResponse> {
       .join("\n\n")
     : (summaries[0]?.content.trim() ?? "");
 
-  const summaryDir = request.summaryPath.split("/").slice(0, -1).join("/");
+  const summaryDir = summaryPath.split("/").slice(0, -1).join("/");
   if (summaryDir) {
     await Deno.mkdir(summaryDir, { recursive: true });
   }
-  await Deno.writeTextFile(request.summaryPath, combinedSummary);
+  await Deno.writeTextFile(summaryPath, combinedSummary);
 
   const title = inferTitle(combinedSummary, request.transcriptPath, flowConfig, language).title;
 
@@ -209,11 +257,12 @@ async function summarize(request: RunRequest): Promise<RunResponse> {
     success: true,
     action: "summarize",
     title,
-    summaryPath: request.summaryPath,
+    summaryPath,
   };
 }
 
 async function publish(request: RunRequest): Promise<RunResponse> {
+  const summaryPath = request.summaryPath!;
   const flow = parseFlow(request.flow);
   const language = parseLanguage(request.language);
   const flowConfig = FLOW_CONFIGS[flow];
@@ -226,7 +275,7 @@ async function publish(request: RunRequest): Promise<RunResponse> {
   let transcript: string;
 
   try {
-    summaryMarkdown = await Deno.readTextFile(request.summaryPath);
+    summaryMarkdown = await Deno.readTextFile(summaryPath);
     transcript = await Deno.readTextFile(request.transcriptPath);
   } catch (error) {
     return {
@@ -272,7 +321,7 @@ async function publish(request: RunRequest): Promise<RunResponse> {
       action: "publish",
       title: documentTitle,
       documentUrl,
-      summaryPath: request.summaryPath,
+      summaryPath,
     };
   } catch (error) {
     return {
@@ -310,6 +359,8 @@ async function main() {
     const request = await readRequest();
     const response = request.action === "publish"
       ? await publish(request)
+      : request.action === "title"
+      ? await generateTitle(request)
       : await summarize(request);
 
     await Deno.stdout.write(new TextEncoder().encode(JSON.stringify(response)));

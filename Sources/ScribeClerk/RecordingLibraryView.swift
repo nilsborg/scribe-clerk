@@ -31,8 +31,8 @@ struct RecordingLibraryView: View {
                 }
             }
 
-            Section("Library") {
-                if appState.filteredRecordings.isEmpty {
+            if appState.groupedRecordings.isEmpty {
+                Section("Library") {
                     ContentUnavailableView {
                         Label("No recordings", systemImage: "waveform")
                     } description: {
@@ -40,10 +40,14 @@ struct RecordingLibraryView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .listRowBackground(Color.clear)
-                } else {
-                    ForEach(appState.filteredRecordings) { recording in
-                        RecordingSidebarRow(recording: recording, appState: appState)
-                            .tag(recording.id)
+                }
+            } else {
+                ForEach(appState.groupedRecordings) { section in
+                    Section(section.title) {
+                        ForEach(section.recordings) { recording in
+                            RecordingSidebarRow(recording: recording, appState: appState)
+                                .tag(recording.id)
+                        }
                     }
                 }
             }
