@@ -129,11 +129,21 @@ private struct InboxRow: View {
         .contextMenu {
             if bulkSelection.isEmpty {
                 Button("Import", action: onImport)
+                Button {
+                    appState.revealInboxItemsInFinder([item])
+                } label: {
+                    Label("Reveal in Finder", systemImage: "folder")
+                }
                 Divider()
                 Button("Move to Trash", role: .destructive, action: onTrash)
             } else {
                 Button("Import \(bulkSelection.count) Items") {
                     appState.importInboxItems(bulkSelection)
+                }
+                Button {
+                    appState.revealInboxItemsInFinder(bulkSelection)
+                } label: {
+                    Label("Reveal in Finder", systemImage: "folder")
                 }
                 Divider()
                 Button("Move \(bulkSelection.count) to Trash", role: .destructive) {

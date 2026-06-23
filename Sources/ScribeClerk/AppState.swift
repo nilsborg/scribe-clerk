@@ -484,6 +484,12 @@ final class AppState: ObservableObject {
         AppSupportPaths.revealInFinder(library.inboxDirectory)
     }
 
+    func revealInboxItemsInFinder(_ items: [InboxItem]) {
+        let urls = items.map(\.url)
+        guard !urls.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
+    }
+
     func openPublishedURL(_ urlString: String) {
         guard let url = URL(string: urlString) else { return }
         NSWorkspace.shared.open(url)
