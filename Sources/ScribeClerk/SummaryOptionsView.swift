@@ -28,7 +28,7 @@ struct SummaryOptionsView: View {
 
         let defaults = AppSettings.shared
         _flow = State(initialValue: defaults.defaultSummarizerFlow)
-        _language = State(initialValue: .english)
+        _language = State(initialValue: sampleRecording?.preferredSummarizerLanguage ?? .english)
     }
 
     var body: some View {

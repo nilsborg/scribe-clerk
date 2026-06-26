@@ -15,6 +15,7 @@ protocol SummaryAdapter {
     func generateSummary(
         transcriptPath: URL,
         summaryPath: URL,
+        recordingTitle: String?,
         options: SummarizerOptions,
         skipCache: Bool
     ) async throws -> SummaryResult
@@ -26,6 +27,7 @@ protocol DeliveryAdapter {
     func publish(
         transcriptPath: URL,
         summaryPath: URL,
+        recordingTitle: String?,
         options: SummarizerOptions
     ) async throws -> PublishResult
 }
@@ -94,6 +96,7 @@ final class MeetingSummariesToNotionAdapter: SummaryAdapter, DeliveryAdapter {
     func generateSummary(
         transcriptPath: URL,
         summaryPath: URL,
+        recordingTitle: String?,
         options: SummarizerOptions,
         skipCache: Bool = false
     ) async throws -> SummaryResult {
@@ -101,6 +104,7 @@ final class MeetingSummariesToNotionAdapter: SummaryAdapter, DeliveryAdapter {
             action: "summarize",
             transcriptPath: transcriptPath,
             summaryPath: summaryPath,
+            recordingTitle: recordingTitle,
             options: options,
             skipCache: skipCache
         )
@@ -122,6 +126,7 @@ final class MeetingSummariesToNotionAdapter: SummaryAdapter, DeliveryAdapter {
             action: "title",
             transcriptPath: transcriptPath,
             summaryPath: nil,
+            recordingTitle: nil,
             options: nil,
             skipCache: false
         )
@@ -136,12 +141,14 @@ final class MeetingSummariesToNotionAdapter: SummaryAdapter, DeliveryAdapter {
     func publish(
         transcriptPath: URL,
         summaryPath: URL,
+        recordingTitle: String?,
         options: SummarizerOptions
     ) async throws -> PublishResult {
         let response = try await run(
             action: "publish",
             transcriptPath: transcriptPath,
             summaryPath: summaryPath,
+            recordingTitle: recordingTitle,
             options: options,
             skipCache: false
         )
@@ -158,6 +165,7 @@ final class MeetingSummariesToNotionAdapter: SummaryAdapter, DeliveryAdapter {
         let action: String
         let transcriptPath: String
         let summaryPath: String?
+        let recordingTitle: String?
         let flow: String?
         let language: String?
         let skipCache: Bool
@@ -176,6 +184,7 @@ final class MeetingSummariesToNotionAdapter: SummaryAdapter, DeliveryAdapter {
         action: String,
         transcriptPath: URL,
         summaryPath: URL?,
+        recordingTitle: String?,
         options: SummarizerOptions?,
         skipCache: Bool
     ) async throws -> RunResponse {
@@ -196,6 +205,7 @@ final class MeetingSummariesToNotionAdapter: SummaryAdapter, DeliveryAdapter {
             action: action,
             transcriptPath: transcriptPath.path,
             summaryPath: summaryPath?.path,
+            recordingTitle: recordingTitle,
             flow: options?.flow.rawValue,
             language: options?.language.rawValue,
             skipCache: skipCache

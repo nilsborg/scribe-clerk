@@ -122,6 +122,15 @@ struct RecordingRecord: Codable, Identifiable, Equatable {
         recordedAt ?? importedAt
     }
 
+    var preferredSummarizerLanguage: SummarizerLanguage {
+        SummarizerLanguage.fromTranscriptionLanguage(transcriptionLanguage)
+    }
+
+    /// LLM-generated title from transcription; nil until title generation completes.
+    var generatedTitle: String? {
+        titleGeneratedAt != nil ? title : nil
+    }
+
     var formattedAudioDuration: String? {
         AudioDuration.formatted(seconds: audioDurationSeconds)
     }

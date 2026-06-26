@@ -854,6 +854,7 @@ final class AppState: ObservableObject {
                 let result = try await adapter.generateSummary(
                     transcriptPath: transcriptURL,
                     summaryPath: summaryURL,
+                    recordingTitle: record.generatedTitle,
                     options: item.options,
                     skipCache: item.regenerate
                 )
@@ -908,6 +909,7 @@ final class AppState: ObservableObject {
                 let result = try await adapter.publish(
                     transcriptPath: transcriptURL,
                     summaryPath: summaryURL,
+                    recordingTitle: record.generatedTitle,
                     options: variant.options
                 )
 
