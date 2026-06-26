@@ -6,12 +6,13 @@ const TITLE_PROMPT = `You generate a short, descriptive title for a meeting reco
 
 Rules:
 - One line only, in English.
-- With a clear project or client: {Project} {Meeting type} with {Names}
-- Without a clear project or client: {Meeting type} with {Names}
+- Focus on what was discussed: {Topic or subject} {Meeting type}
 - Meeting type: infer from context — Meeting, Alignment, Check-in, Kick-off, Workshop, Review, Stand-up, Sync, Interview, Retro, Planning, Demo, etc.
-- Project: client name, product name, or project name only when clearly discussed. Use the name people actually used.
-- Names: comma-separated first names of clearly identifiable participants. Use "and" before the last name when there are three or more. If no names are clear, omit the names part.
-- Examples: Acme Alignment with Thomas and Claudia, Ask Sona Kick-off with Dan, Check-in with Thomas and Claudia, Planning with Dan
+- Topic: the main subject, product, client, or theme discussed. Use names actually spoken in the transcript.
+- Optional project/client: include only when clearly the meeting's subject (e.g. "Acme Data Model Workshop").
+- Do NOT include participant names unless they are explicitly spoken as names in the transcript. Most transcripts do not identify speakers — omit names entirely when unsure.
+- Do NOT invent or assume people, projects, or clients not clearly discussed.
+- Examples: Product Architecture Workshop, Data Model Planning, Acme Kick-off, Team Sync, Q2 Planning Review
 - Maximum 80 characters.
 - Return ONLY the title text, no quotes, no markdown, no explanation.`;
 

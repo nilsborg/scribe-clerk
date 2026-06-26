@@ -53,12 +53,18 @@ export async function loadGlossary(
 }
 
 export function formatGlossaryForSummary(glossary: Glossary): string {
+  const sections = glossary.sections.filter(
+    (section) => !/^people$/i.test(section.title),
+  );
+  if (sections.length === 0) return "";
+
   const lines = [
     "## Known terms",
-    "Use these exact spellings when they appear in the transcript (titles, names, projects, and notes):",
+    "Use these exact spellings only when the term is clearly spoken in the transcript.",
+    "Do not add people, projects, or clients from this list to the summary unless they are actually discussed.",
   ];
 
-  for (const section of glossary.sections) {
+  for (const section of sections) {
     lines.push(`\n### ${section.title}`);
     for (const term of section.terms) {
       lines.push(`- ${term}`);
@@ -95,5 +101,7 @@ export function appendGlossaryToPrompt(
   glossary: Glossary | null,
 ): string {
   if (!glossary) return basePrompt;
-  return `${basePrompt.trim()}\n\n${formatGlossaryForSummary(glossary)}`;
+  const glossaryBlock = formatGlossaryForSummary(glossary);
+  if (!glossaryBlock) return basePrompt;
+  return `${basePrompt.trim()}\n\n${glossaryBlock}`;
 }

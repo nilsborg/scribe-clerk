@@ -17,7 +17,7 @@ function normalizeTitle(raw: string): string {
     .trim();
 }
 
-function stripSuggestedTitleSection(summary: string): string {
+export function stripSuggestedTitleSection(summary: string): string {
   return summary
     .replace(SUGGESTED_TITLE_PATTERN, "\n")
     .replace(/^\n+/, "")

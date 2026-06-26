@@ -12,7 +12,7 @@ import {
 } from "./config/summaryModels.ts";
 import {
   applyGermanTitleFlag,
-  inferDocumentTitle,
+  stripSuggestedTitleSection,
 } from "./functions/inferDocumentTitle.ts";
 import { generateRecordingTitle } from "./functions/generateRecordingTitle.ts";
 import { ADAPTER_ROOT, PROMPT_PATHS } from "./paths.ts";
@@ -25,6 +25,7 @@ interface RunRequest {
   action: RunAction;
   transcriptPath: string;
   summaryPath?: string;
+  recordingTitle?: string;
   flow?: FlowKey;
   language?: SummaryLanguage;
   skipCache?: boolean;
@@ -44,7 +45,6 @@ interface FlowConfig {
   notionDatabaseEnvKey: string;
   includeAttendees?: boolean;
   documentTitleBuilder?: (baseName: string) => string;
-  inferTitleFromContent?: boolean;
   summaryModels: SummaryModelConfig[];
   titlePropertyName: string;
   additionalProperties?: Record<string, unknown>;
@@ -57,7 +57,6 @@ const FLOW_CONFIGS: Record<FlowKey, FlowConfig> = {
     includeAttendees: true,
     summaryModels: [...MEETING_SUMMARY_MODELS],
     titlePropertyName: "Name",
-    inferTitleFromContent: true,
     documentTitleBuilder: (name) => `Meeting - ${name}`,
   },
   "project-updates": {
@@ -198,7 +197,13 @@ async function summarize(request: RunRequest): Promise<RunResponse> {
     try {
       const existing = await Deno.readTextFile(summaryPath);
       if (existing.trim().length > 0) {
-        const title = inferTitle(existing, request.transcriptPath, flowConfig, language).title;
+        const title = await resolveDocumentTitle(
+          request,
+          request.transcriptPath,
+          flowConfig,
+          language,
+          transcript,
+        );
         return {
           success: true,
           action: "summarize",
@@ -251,7 +256,13 @@ async function summarize(request: RunRequest): Promise<RunResponse> {
   }
   await Deno.writeTextFile(summaryPath, combinedSummary);
 
-  const title = inferTitle(combinedSummary, request.transcriptPath, flowConfig, language).title;
+  const title = await resolveDocumentTitle(
+    request,
+    request.transcriptPath,
+    flowConfig,
+    language,
+    transcript,
+  );
 
   return {
     success: true,
@@ -285,9 +296,14 @@ async function publish(request: RunRequest): Promise<RunResponse> {
     };
   }
 
-  const inferred = inferTitle(summaryMarkdown, request.transcriptPath, flowConfig, language);
-  const documentTitle = inferred.title;
-  const documentContent = inferred.content;
+  const documentTitle = await resolveDocumentTitle(
+    request,
+    request.transcriptPath,
+    flowConfig,
+    language,
+    transcript,
+  );
+  const documentContent = stripSuggestedTitleSection(summaryMarkdown);
 
   if (!skipNotion && (!notionApiKey || !notionDatabaseId)) {
     return {
@@ -332,26 +348,48 @@ async function publish(request: RunRequest): Promise<RunResponse> {
   }
 }
 
-function inferTitle(
-  summaryMarkdown: string,
+function filenameFallbackTitle(
   transcriptPath: string,
   flowConfig: FlowConfig,
   language: SummaryLanguage,
-) {
+): string {
   const fileName = transcriptPath.split("/").pop() || "Unknown";
   const baseName = fileName.replace(/\.[^/.]+$/, "");
   const fallbackTitle = flowConfig.documentTitleBuilder
     ? flowConfig.documentTitleBuilder(baseName)
     : `Summary - ${baseName}`;
 
-  if (flowConfig.inferTitleFromContent) {
-    return inferDocumentTitle(summaryMarkdown, fallbackTitle, { language });
+  return language === "german" ? applyGermanTitleFlag(fallbackTitle) : fallbackTitle;
+}
+
+async function resolveDocumentTitle(
+  request: RunRequest,
+  transcriptPath: string,
+  flowConfig: FlowConfig,
+  language: SummaryLanguage,
+  transcript: string,
+): Promise<string> {
+  const preferred = request.recordingTitle?.trim();
+  if (preferred) {
+    return language === "german" ? applyGermanTitleFlag(preferred) : preferred;
   }
 
-  return {
-    title: language === "german" ? applyGermanTitleFlag(fallbackTitle) : fallbackTitle,
-    content: summaryMarkdown,
-  };
+  const fallbackTitle = filenameFallbackTitle(transcriptPath, flowConfig, language);
+  const openRouterKey = resolveEnv("OPENROUTER_API_KEY");
+
+  if (!openRouterKey || !transcript.trim()) {
+    return fallbackTitle;
+  }
+
+  try {
+    return await generateRecordingTitle({
+      transcript,
+      apiKey: openRouterKey,
+      fallback: fallbackTitle,
+    });
+  } catch {
+    return fallbackTitle;
+  }
 }
 
 async function main() {
