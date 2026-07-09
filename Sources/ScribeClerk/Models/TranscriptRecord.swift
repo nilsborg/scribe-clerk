@@ -3,6 +3,11 @@ import Foundation
 struct TranscriptionOptions: Equatable {
     var language: String
     var modelPath: String
+    /// Runs a speaker-diarization pass and labels the transcript by speaker.
+    var identifySpeakers: Bool = false
+    /// Known number of speakers, or nil to auto-detect. Only used when
+    /// `identifySpeakers` is true.
+    var speakerCount: Int? = nil
 }
 
 struct TranscriptRecord: Codable, Equatable {

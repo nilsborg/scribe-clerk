@@ -3,15 +3,39 @@ import SwiftUI
 struct SettingsView: View {
     @State private var whisperPath = AppSettings.shared.whisperBinaryPath
     @State private var defaultModelPath = AppSettings.shared.defaultModelPath
+    @State private var diarizationPath = AppSettings.shared.diarizationBinaryPath
     @State private var denoPath = AppSettings.shared.denoBinaryPath
     @State private var adapterEnvPath = AppSettings.shared.adapterEnvPath
     @State private var defaultSummarizerFlow = AppSettings.shared.defaultSummarizerFlow
+
+    private var diarizationStatus: String {
+        if SpeakerDiarizer.isConfigured {
+            return "Ready. Models found in \(SpeakerDiarizer.modelsDirectory.path)."
+        }
+        return SpeakerDiarizer.setupHint
+    }
 
     var body: some View {
         Form {
             Section("Whisper") {
                 TextField("Whisper binary", text: $whisperPath)
                 TextField("Default model", text: $defaultModelPath)
+            }
+
+            Section("Speaker detection") {
+                TextField("sherpa-onnx binary", text: $diarizationPath)
+                Text(diarizationStatus)
+                    .font(.caption)
+                    .foregroundStyle(SpeakerDiarizer.isConfigured ? Color.secondary : Color.red)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button("Reveal Models Folder") {
+                    try? FileManager.default.createDirectory(
+                        at: SpeakerDiarizer.modelsDirectory,
+                        withIntermediateDirectories: true
+                    )
+                    AppSupportPaths.revealInFinder(SpeakerDiarizer.modelsDirectory)
+                }
             }
 
             Section("Summarizer Adapter") {
@@ -40,7 +64,7 @@ struct SettingsView: View {
             }
 
             Section("How to use") {
-                Text("Drop audio into the inbox, import into your library, transcribe with Whisper, generate editable summaries, then publish to Notion.")
+                Text("Drop audio into the inbox, import into your library, transcribe with Whisper, then generate editable summaries.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -57,6 +81,9 @@ struct SettingsView: View {
         }
         .onChange(of: defaultModelPath) { _, newValue in
             AppSettings.shared.defaultModelPath = newValue
+        }
+        .onChange(of: diarizationPath) { _, newValue in
+            AppSettings.shared.diarizationBinaryPath = newValue
         }
         .onChange(of: denoPath) { _, newValue in
             AppSettings.shared.denoBinaryPath = newValue

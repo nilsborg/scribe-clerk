@@ -24,25 +24,9 @@ struct RecordingStatusDescriptor {
 
     @MainActor
     init(recording: RecordingRecord, appState: AppState? = nil) {
-        if let appState, appState.activePublishRecordingID == recording.id {
-            label = "Publishing…"
-            icon = "paperplane.circle"
-            color = .accentColor
-            isActive = true
-            return
-        }
-
         if let appState, appState.activeSummaryRecordingID == recording.id {
             label = "Summarizing…"
             icon = "text.append"
-            color = .accentColor
-            isActive = true
-            return
-        }
-
-        if recording.summaryVariants.contains(where: { $0.status == .publishing }) {
-            label = "Publishing…"
-            icon = "paperplane.circle"
             color = .accentColor
             isActive = true
             return
@@ -60,14 +44,6 @@ struct RecordingStatusDescriptor {
             label = "Queued"
             icon = "clock"
             color = .accentColor
-            isActive = false
-            return
-        }
-
-        if let published = recording.summaryVariants.first(where: { $0.status == .published }) {
-            label = "Published · \(published.options.flow.label)"
-            icon = "paperplane.circle.fill"
-            color = .green
             isActive = false
             return
         }

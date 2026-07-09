@@ -46,22 +46,6 @@ struct MultiSelectionView: View {
                     }
                 }
 
-                if !actions.publishItems.isEmpty {
-                    Button {
-                        appState.beginBulkPublish(items: actions.publishItems)
-                    } label: {
-                        Label("Send to Notion \(actions.publishItems.count)", systemImage: "paperplane")
-                    }
-                }
-
-                if !actions.republishItems.isEmpty {
-                    Button {
-                        appState.beginBulkPublish(items: actions.republishItems)
-                    } label: {
-                        Label("Re-publish \(actions.republishItems.count)", systemImage: "paperplane")
-                    }
-                }
-
                 Spacer()
 
                 Button(role: .destructive) {

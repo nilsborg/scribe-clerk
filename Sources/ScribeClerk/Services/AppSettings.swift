@@ -7,6 +7,7 @@ final class AppSettings {
 
     private enum Keys {
         static let whisperBinaryPath = "whisperBinaryPath"
+        static let diarizationBinaryPath = "diarizationBinaryPath"
         static let defaultModelPath = "defaultModelPath"
         static let denoBinaryPath = "denoBinaryPath"
         static let adapterEnvPath = "adapterEnvPath"
@@ -23,6 +24,16 @@ final class AppSettings {
         }
         set {
             defaults.set(newValue, forKey: Keys.whisperBinaryPath)
+        }
+    }
+
+    var diarizationBinaryPath: String {
+        get {
+            defaults.string(forKey: Keys.diarizationBinaryPath)
+                ?? "/opt/homebrew/bin/sherpa-onnx-offline-speaker-diarization"
+        }
+        set {
+            defaults.set(newValue, forKey: Keys.diarizationBinaryPath)
         }
     }
 

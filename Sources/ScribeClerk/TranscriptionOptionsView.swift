@@ -49,6 +49,9 @@ struct TranscriptionOptionsView: View {
     @State private var language: String
     @State private var modelPath: String
     @State private var usesCustomModel: Bool
+    @State private var identifySpeakers = false
+    // 0 = auto-detect; 2…10 = a known speaker count hint.
+    @State private var speakerCount = 0
 
     private let availableModels: [String]
 
@@ -98,6 +101,31 @@ struct TranscriptionOptionsView: View {
                     }
                 }
 
+                Section("Speaker detection") {
+                    Toggle("Identify speakers", isOn: $identifySpeakers)
+                    Text("Runs a separate diarization pass and labels the transcript by speaker (Speaker 1, Speaker 2…). Works with any language or model.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if identifySpeakers {
+                        Picker("Speakers", selection: $speakerCount) {
+                            Text("Auto-detect").tag(0)
+                            ForEach(2...10, id: \.self) { count in
+                                Text("\(count)").tag(count)
+                            }
+                        }
+                        Text("If you know how many people were talking, set it here for more accurate labels. Otherwise leave on Auto-detect.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if identifySpeakers && !SpeakerDiarizer.isConfigured {
+                        Text(SpeakerDiarizer.setupHint)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
+
                 Section("Model") {
                     if availableModels.isEmpty {
                         TextField("Model path", text: $modelPath)
@@ -131,19 +159,30 @@ struct TranscriptionOptionsView: View {
                 Spacer()
 
                 Button(startButtonTitle) {
-                    onStart(
-                        TranscriptionOptions(
-                            language: language,
-                            modelPath: modelPath.trimmingCharacters(in: .whitespacesAndNewlines)
-                        )
-                    )
+                    onStart(resolvedOptions())
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(modelPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(startIsDisabled)
             }
         }
         .padding(24)
         .frame(width: 460)
+    }
+
+    private func resolvedOptions() -> TranscriptionOptions {
+        TranscriptionOptions(
+            language: language,
+            modelPath: modelPath.trimmingCharacters(in: .whitespacesAndNewlines),
+            identifySpeakers: identifySpeakers,
+            speakerCount: (identifySpeakers && speakerCount > 0) ? speakerCount : nil
+        )
+    }
+
+    private var startIsDisabled: Bool {
+        if identifySpeakers && !SpeakerDiarizer.isConfigured {
+            return true
+        }
+        return modelPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var startButtonTitle: String {

@@ -85,19 +85,6 @@ struct ContentView: View {
                 }
             )
         }
-        .sheet(item: $appState.publishRequest) { request in
-            PublishConfirmationView(
-                items: request.items,
-                sampleRecording: appState.recordings.first { $0.id == request.items.first?.recordingID },
-                onCancel: { appState.publishRequest = nil },
-                onPublish: {
-                    appState.publishRequest = nil
-                    for item in request.items {
-                        appState.enqueuePublish(recordingID: item.recordingID, variantID: item.variantID)
-                    }
-                }
-            )
-        }
         .alert("Duplicate recording", isPresented: duplicateBinding) {
             Button("Open Existing", role: .cancel) {
                 appState.confirmDuplicateImport(createAnyway: false)

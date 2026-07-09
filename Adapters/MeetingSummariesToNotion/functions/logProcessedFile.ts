@@ -2,7 +2,6 @@ export interface ProcessedFileRecord {
   filePath: string;
   fileName: string;
   processedAt: string;
-  notionUrl?: string;
   success: boolean;
   flowType?: string;
 }
@@ -14,7 +13,6 @@ const LOG_FILE_PATH = adapterPath("processed_files.json");
 export async function logProcessedFile(
   filePath: string,
   success: boolean,
-  notionUrl?: string,
   flowType?: string
 ): Promise<void> {
   const fileName = filePath.split('/').pop() || 'unknown';
@@ -24,7 +22,6 @@ export async function logProcessedFile(
     filePath,
     fileName,
     processedAt: new Date().toISOString(),
-    notionUrl,
     success,
     flowType: normalizedFlowType
   };

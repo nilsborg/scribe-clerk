@@ -3,23 +3,19 @@
 import { config } from "https://deno.land/x/dotenv/mod.ts";
 import { loadPrompt } from "./functions/loadPrompt.ts";
 import { appendGlossaryToPrompt, loadGlossary } from "./functions/loadGlossary.ts";
-import { createNotionDocument } from "./functions/createNotionDocument.ts";
 import { getOpenRouterSummary } from "./functions/getOpenRouterSummary.ts";
 import {
   MEETING_SUMMARY_MODELS,
   PROJECT_UPDATE_SUMMARY_MODELS,
   type SummaryModelConfig,
 } from "./config/summaryModels.ts";
-import {
-  applyGermanTitleFlag,
-  stripSuggestedTitleSection,
-} from "./functions/inferDocumentTitle.ts";
+import { applyGermanTitleFlag } from "./functions/inferDocumentTitle.ts";
 import { generateRecordingTitle } from "./functions/generateRecordingTitle.ts";
 import { ADAPTER_ROOT, PROMPT_PATHS } from "./paths.ts";
 
 type FlowKey = keyof typeof PROMPT_PATHS;
 type SummaryLanguage = "english" | "german";
-type RunAction = "summarize" | "publish" | "title";
+type RunAction = "summarize" | "title";
 
 interface RunRequest {
   action: RunAction;
@@ -36,35 +32,24 @@ interface RunResponse {
   action: RunAction;
   title?: string;
   summaryPath?: string;
-  documentUrl?: string;
   error?: string;
 }
 
 interface FlowConfig {
   promptFilePath: string;
-  notionDatabaseEnvKey: string;
-  includeAttendees?: boolean;
   documentTitleBuilder?: (baseName: string) => string;
   summaryModels: SummaryModelConfig[];
-  titlePropertyName: string;
-  additionalProperties?: Record<string, unknown>;
 }
 
 const FLOW_CONFIGS: Record<FlowKey, FlowConfig> = {
   meeting: {
     promptFilePath: PROMPT_PATHS.meeting,
-    notionDatabaseEnvKey: "NOTION_MEETING_DATABASE_ID",
-    includeAttendees: true,
     summaryModels: [...MEETING_SUMMARY_MODELS],
-    titlePropertyName: "Name",
     documentTitleBuilder: (name) => `Meeting - ${name}`,
   },
   "project-updates": {
     promptFilePath: PROMPT_PATHS["project-updates"],
-    notionDatabaseEnvKey: "NOTION_PROJECT_UPDATES_DATABASE_ID",
-    includeAttendees: false,
     summaryModels: [...PROJECT_UPDATE_SUMMARY_MODELS],
-    titlePropertyName: "Title",
     documentTitleBuilder: (name) => `Project Update - ${name}`,
   },
 };
@@ -123,7 +108,7 @@ async function readRequest(): Promise<RunRequest> {
   }
 
   if (parsed.action !== "title" && !parsed.summaryPath) {
-    throw new Error("Request must include summaryPath for summarize and publish actions.");
+    throw new Error("Request must include summaryPath for the summarize action.");
   }
 
   return parsed;
@@ -272,82 +257,6 @@ async function summarize(request: RunRequest): Promise<RunResponse> {
   };
 }
 
-async function publish(request: RunRequest): Promise<RunResponse> {
-  const summaryPath = request.summaryPath!;
-  const flow = parseFlow(request.flow);
-  const language = parseLanguage(request.language);
-  const flowConfig = FLOW_CONFIGS[flow];
-  const notionApiKey = resolveEnv("NOTION_API_KEY");
-  const notionDatabaseId = resolveEnv(flowConfig.notionDatabaseEnvKey);
-  const notionUserId = resolveEnv("NOTION_USER_ID");
-  const skipNotion = resolveEnv("SKIP_NOTION") === "1";
-
-  let summaryMarkdown: string;
-  let transcript: string;
-
-  try {
-    summaryMarkdown = await Deno.readTextFile(summaryPath);
-    transcript = await Deno.readTextFile(request.transcriptPath);
-  } catch (error) {
-    return {
-      success: false,
-      action: "publish",
-      error: `Could not read summary or transcript: ${error}`,
-    };
-  }
-
-  const documentTitle = await resolveDocumentTitle(
-    request,
-    request.transcriptPath,
-    flowConfig,
-    language,
-    transcript,
-  );
-  const documentContent = stripSuggestedTitleSection(summaryMarkdown);
-
-  if (!skipNotion && (!notionApiKey || !notionDatabaseId)) {
-    return {
-      success: false,
-      action: "publish",
-      error: "Notion credentials are not configured.",
-    };
-  }
-
-  let documentUrl: string | undefined;
-
-  try {
-    if (!skipNotion) {
-      documentUrl = await createNotionDocument(
-        documentTitle,
-        documentContent,
-        flowConfig.includeAttendees ? notionUserId : undefined,
-        notionDatabaseId!,
-        notionApiKey!,
-        {
-          includeAttendees: flowConfig.includeAttendees,
-          titlePropertyName: flowConfig.titlePropertyName,
-          additionalProperties: flowConfig.additionalProperties,
-          transcript,
-        },
-      );
-    }
-
-    return {
-      success: true,
-      action: "publish",
-      title: documentTitle,
-      documentUrl,
-      summaryPath,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      action: "publish",
-      error: `Publishing failed: ${error}`,
-    };
-  }
-}
-
 function filenameFallbackTitle(
   transcriptPath: string,
   flowConfig: FlowConfig,
@@ -395,9 +304,7 @@ async function resolveDocumentTitle(
 async function main() {
   try {
     const request = await readRequest();
-    const response = request.action === "publish"
-      ? await publish(request)
-      : request.action === "title"
+    const response = request.action === "title"
       ? await generateTitle(request)
       : await summarize(request);
 

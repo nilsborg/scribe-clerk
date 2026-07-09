@@ -11,11 +11,6 @@ struct QueuedSummaryItem: Equatable {
     let regenerate: Bool
 }
 
-struct QueuedPublishItem: Equatable {
-    let recordingID: String
-    let variantID: String
-}
-
 struct DuplicateImportPrompt: Identifiable {
     enum ImportKind {
         case audio
@@ -42,23 +37,5 @@ struct SummaryRequest: Identifiable {
     init(recordingIDs: [String], regenerate: Bool) {
         self.recordingIDs = recordingIDs
         self.regenerate = regenerate
-    }
-}
-
-struct PublishRequestItem: Equatable {
-    let recordingID: String
-    let variantID: String
-}
-
-struct PublishRequest: Identifiable {
-    let id = UUID()
-    let items: [PublishRequestItem]
-
-    init(recordingID: String, variantID: String) {
-        self.items = [PublishRequestItem(recordingID: recordingID, variantID: variantID)]
-    }
-
-    init(items: [PublishRequestItem]) {
-        self.items = items
     }
 }

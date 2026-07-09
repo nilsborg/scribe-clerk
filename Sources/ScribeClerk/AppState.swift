@@ -13,18 +13,16 @@ final class AppState: ObservableObject {
     @Published var filterStatus: RecordingFilterStatus = .all
     @Published var pendingTranscriptionRequest: TranscriptionRequest?
     @Published var summaryRequest: SummaryRequest?
-    @Published var publishRequest: PublishRequest?
     @Published var duplicateImportPrompt: DuplicateImportPrompt?
     @Published var errorMessage: String?
     @Published private(set) var whisperLogText = ""
     @Published private(set) var transcriptionProgress: Double?
+    @Published private(set) var transcriptionPhase: TranscriptionPhase = .transcribing
 
     @Published private(set) var activeTranscriptionRecordingID: String?
     @Published private(set) var pendingTranscriptionCount = 0
     @Published private(set) var activeSummaryRecordingID: String?
     @Published private(set) var pendingSummaryCount = 0
-    @Published private(set) var activePublishRecordingID: String?
-    @Published private(set) var pendingPublishCount = 0
 
     private let transcriber = WhisperTranscriber()
     private let adapter = MeetingSummariesToNotionAdapter()
@@ -33,18 +31,15 @@ final class AppState: ObservableObject {
 
     private var transcriptionQueue: [QueuedTranscriptionItem] = []
     private var summaryQueue: [QueuedSummaryItem] = []
-    private var publishQueue: [QueuedPublishItem] = []
     private var titleQueue: [String] = []
     private var transcriptionTask: Task<Void, Never>?
     private var summaryTask: Task<Void, Never>?
-    private var publishTask: Task<Void, Never>?
     private var titleTask: Task<Void, Never>?
     private var stopTranscriptionRequested = false
     private var stopSummaryRequested = false
-    private var stopPublishRequested = false
 
     var isAnyJobActive: Bool {
-        isTranscriptionActive || isSummaryActive || isPublishActive
+        isTranscriptionActive || isSummaryActive
     }
 
     var isTranscriptionActive: Bool {
@@ -53,10 +48,6 @@ final class AppState: ObservableObject {
 
     var isSummaryActive: Bool {
         summaryTask != nil
-    }
-
-    var isPublishActive: Bool {
-        publishTask != nil
     }
 
     var filteredRecordings: [RecordingRecord] {
@@ -112,10 +103,6 @@ final class AppState: ObservableObject {
         if let activeSummaryRecordingID,
            let recording = recordings.first(where: { $0.id == activeSummaryRecordingID }) {
             parts.append("Summarizing: “\(recording.title)”.")
-        }
-        if let activePublishRecordingID,
-           let recording = recordings.first(where: { $0.id == activePublishRecordingID }) {
-            parts.append("Publishing: “\(recording.title)”.")
         }
 
         return parts.joined(separator: " ")
@@ -388,7 +375,7 @@ final class AppState: ObservableObject {
             guard let record = recordings.first(where: { $0.id == id }) else { return false }
             guard record.transcriptionStatus == .completed else { return false }
             return !record.summaryVariants.contains {
-                $0.status == .queued || $0.status == .generating || $0.status == .publishing
+                $0.status == .queued || $0.status == .generating
             }
         }
         guard !eligible.isEmpty else { return }
@@ -418,38 +405,6 @@ final class AppState: ObservableObject {
         }
 
         startSummaryProcessorIfNeeded()
-    }
-
-    func beginPublish(recordingID: String, variantID: String) {
-        beginBulkPublish(items: [PublishRequestItem(recordingID: recordingID, variantID: variantID)])
-    }
-
-    func beginBulkPublish(items: [PublishRequestItem]) {
-        let eligible = items.filter { item in
-            guard let record = recordings.first(where: { $0.id == item.recordingID }),
-                  let variant = record.summaryVariants.first(where: { $0.id == item.variantID }) else {
-                return false
-            }
-            let isPublishable = [.ready, .stale, .published, .failed].contains(variant.status)
-            let isPublishing = record.summaryVariants.contains { $0.status == .publishing }
-            return isPublishable && !isPublishing
-        }
-        guard !eligible.isEmpty else { return }
-
-        publishRequest = PublishRequest(items: eligible)
-    }
-
-    func enqueuePublish(recordingID: String, variantID: String) {
-        guard !publishQueue.contains(where: { $0.recordingID == recordingID && $0.variantID == variantID }),
-              activePublishRecordingID != recordingID else { return }
-
-        publishQueue.append(QueuedPublishItem(recordingID: recordingID, variantID: variantID))
-        pendingPublishCount = publishQueue.count
-        updateVariant(recordingID: recordingID, variantID: variantID) { variant in
-            variant.status = .publishing
-            variant.errorMessage = nil
-        }
-        startPublishProcessorIfNeeded()
     }
 
     func reloadTranscript(for recordingID: String) {
@@ -498,24 +453,17 @@ final class AppState: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting(urls)
     }
 
-    func openPublishedURL(_ urlString: String) {
-        guard let url = URL(string: urlString) else { return }
-        NSWorkspace.shared.open(url)
-    }
-
     func deleteRecording(_ recordingID: String) {
         guard let record = recordings.first(where: { $0.id == recordingID }),
               record.transcriptionStatus != .inProgress,
               record.transcriptionStatus != .queued,
               activeSummaryRecordingID != recordingID,
-              activePublishRecordingID != recordingID,
               !record.summaryVariants.contains(where: {
-                  $0.status == .queued || $0.status == .generating || $0.status == .publishing
+                  $0.status == .queued || $0.status == .generating
               }) else { return }
 
         transcriptionQueue.removeAll { $0.recordingID == recordingID }
         summaryQueue.removeAll { $0.recordingID == recordingID }
-        publishQueue.removeAll { $0.recordingID == recordingID }
         store.delete(id: recordingID)
         recordings.removeAll { $0.id == recordingID }
 
@@ -534,7 +482,6 @@ final class AppState: ObservableObject {
     func stopAllQueues() {
         stopTranscriptionQueue()
         stopSummaryQueue()
-        stopPublishQueue()
     }
 
     func stopTranscriptionQueue() {
@@ -561,34 +508,34 @@ final class AppState: ObservableObject {
         resetSummaryStatuses()
     }
 
-    func stopPublishQueue() {
-        guard isPublishActive else { return }
-        stopPublishRequested = true
-        publishTask?.cancel()
-        adapter.cancel()
-        publishQueue.removeAll()
-        pendingPublishCount = 0
-        activePublishRecordingID = nil
-    }
-
     func appendWhisperLog(_ chunk: String) {
         whisperLogText += chunk
-        if let progress = WhisperProgressParser.latestProgress(in: whisperLogText) {
-            transcriptionProgress = progress
+        // whisper and sherpa print progress differently and in different phases.
+        switch transcriptionPhase {
+        case .transcribing:
+            if let progress = WhisperProgressParser.latestProgress(in: chunk) {
+                transcriptionProgress = progress
+            }
+        case .diarizing:
+            if let progress = DiarizationProgressParser.latestProgress(in: chunk) {
+                transcriptionProgress = progress
+            }
         }
     }
 
     func clearWhisperLog() {
         whisperLogText = ""
         transcriptionProgress = nil
+        transcriptionPhase = .transcribing
     }
 
     func transcriptionProgressLabel(for recordingID: String) -> String {
+        let verb = transcriptionPhase == .diarizing ? "Identifying speakers" : "Transcribing"
         guard activeTranscriptionRecordingID == recordingID,
               let transcriptionProgress else {
-            return "Transcribing…"
+            return "\(verb)…"
         }
-        return "Transcribing… \(Int((transcriptionProgress * 100).rounded()))%"
+        return "\(verb)… \(Int((transcriptionProgress * 100).rounded()))%"
     }
 
     func audioURL(for record: RecordingRecord) -> URL? {
@@ -679,9 +626,7 @@ final class AppState: ObservableObject {
         case .transcribed:
             return record.transcriptionStatus == .completed
         case .summarized:
-            return record.summaryVariants.contains { $0.status == .ready || $0.status == .published || $0.status == .stale }
-        case .published:
-            return record.summaryVariants.contains { $0.status == .published }
+            return record.summaryVariants.contains { $0.status == .ready || $0.status == .stale }
         }
     }
 
@@ -708,16 +653,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func startPublishProcessorIfNeeded() {
-        guard publishTask == nil else { return }
-        publishTask = Task {
-            await runPublishProcessor()
-            publishTask = nil
-            stopPublishRequested = false
-            activePublishRecordingID = nil
-            pendingPublishCount = 0
-        }
-    }
 
     private func enqueueTitleGeneration(for recordingID: String) {
         guard !titleQueue.contains(recordingID) else { return }
@@ -783,6 +718,11 @@ final class AppState: ObservableObject {
                     options: item.options,
                     onLog: { [weak self] chunk in
                         self?.appendWhisperLog(chunk)
+                    },
+                    onPhase: { [weak self] phase in
+                        self?.transcriptionPhase = phase
+                        // Restart the bar for the new phase.
+                        self?.transcriptionProgress = nil
                     }
                 )
 
@@ -870,7 +810,7 @@ final class AppState: ObservableObject {
                 persist(record)
                 JobNotification.post(
                     title: "Summary ready",
-                    body: "“\(record.title)” is ready to publish."
+                    body: "“\(record.title)” has a new summary."
                 )
             } catch {
                 if Task.isCancelled || stopSummaryRequested { break }
@@ -888,59 +828,6 @@ final class AppState: ObservableObject {
             summaryQueue.removeAll()
             pendingSummaryCount = 0
             resetSummaryStatuses()
-        }
-    }
-
-    private func runPublishProcessor() async {
-        while !publishQueue.isEmpty {
-            if Task.isCancelled || stopPublishRequested { break }
-
-            let item = publishQueue.removeFirst()
-            pendingPublishCount = publishQueue.count
-
-            guard var record = recordings.first(where: { $0.id == item.recordingID }),
-                  let transcriptURL = store.transcriptURL(for: record),
-                  var variant = record.summaryVariants.first(where: { $0.id == item.variantID }),
-                  let summaryURL = store.summaryURL(for: record, variant: variant) else { continue }
-
-            activePublishRecordingID = record.id
-
-            do {
-                let result = try await adapter.publish(
-                    transcriptPath: transcriptURL,
-                    summaryPath: summaryURL,
-                    recordingTitle: record.generatedTitle,
-                    options: variant.options
-                )
-
-                if Task.isCancelled || stopPublishRequested { break }
-
-                let attempt = PublishAttempt(
-                    success: true,
-                    destinationURL: result.documentURL?.absoluteString
-                )
-                variant.publishAttempts.append(attempt)
-                variant.status = .published
-                variant.title = result.title ?? variant.title
-                variant.errorMessage = nil
-                record.upsertVariant(variant)
-                persist(record)
-                JobNotification.post(
-                    title: "Published to Notion",
-                    body: "“\(record.title)” was published."
-                )
-            } catch {
-                if Task.isCancelled || stopPublishRequested { break }
-                let attempt = PublishAttempt(success: false, errorMessage: error.localizedDescription)
-                variant.publishAttempts.append(attempt)
-                variant.status = .failed
-                variant.errorMessage = error.localizedDescription
-                record.upsertVariant(variant)
-                persist(record)
-                errorMessage = error.localizedDescription
-            }
-
-            activePublishRecordingID = nil
         }
     }
 

@@ -1,5 +1,11 @@
 import Foundation
 
+/// Which stage of the transcription pipeline is currently running.
+enum TranscriptionPhase {
+    case transcribing
+    case diarizing
+}
+
 enum WhisperTranscriberError: LocalizedError {
     case missingBinary(String)
     case missingModel(String)
@@ -37,7 +43,8 @@ final class WhisperTranscriber {
     func transcribe(
         audioURL: URL,
         options: TranscriptionOptions,
-        onLog: (@MainActor (String) -> Void)? = nil
+        onLog: (@MainActor (String) -> Void)? = nil,
+        onPhase: (@MainActor (TranscriptionPhase) -> Void)? = nil
     ) async throws -> TranscriptRecord {
         try Task.checkCancellation()
 
@@ -71,16 +78,21 @@ final class WhisperTranscriber {
         process.environment = ProcessInfo.processInfo.environment.merging([
             "TMPDIR": workDirectory.path
         ]) { _, new in new }
-        process.arguments = [
+        var arguments = [
             "-m", modelURL.path,
             "-l", options.language,
-            "-otxt",
             "-np",
             "-pp",
-            "-nt",
-            "-of", outputBase.path,
-            preparedAudioURL.path
+            "-of", outputBase.path
         ]
+        if options.identifySpeakers {
+            // Diarization needs per-segment timestamps, so emit JSON and keep timestamps.
+            arguments += ["-oj"]
+        } else {
+            arguments += ["-otxt", "-nt"]
+        }
+        arguments.append(preparedAudioURL.path)
+        process.arguments = arguments
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -123,13 +135,35 @@ final class WhisperTranscriber {
             )
         }
 
-        let text = try readTranscript(
-            stdout: stdout,
-            outputBase: outputBase,
-            preparedAudioURL: preparedAudioURL,
-            workDirectory: workDirectory,
-            stderr: stderr
-        )
+        let text: String
+        if options.identifySpeakers {
+            let segments = try TranscriptSegment.parseWhisperJSON(
+                at: URL(fileURLWithPath: outputBase.path + ".json")
+            )
+            if let onPhase {
+                Task { @MainActor in onPhase(.diarizing) }
+            }
+            // sherpa-onnx needs a canonical 16 kHz mono PCM WAV; the whisper-prepared
+            // file uses afconvert's extensible header, which it rejects. Make a
+            // canonical copy from the source.
+            let diarizationInput = try audioConverter.sixteenKMonoWAV(
+                from: audioURL, in: workDirectory
+            )
+            let speakerTurns = try await SpeakerDiarizer().diarize(
+                audioURL: diarizationInput,
+                speakerCount: options.speakerCount,
+                onLog: onLog
+            )
+            text = SpeakerLabeler.label(segments: segments, with: speakerTurns)
+        } else {
+            text = try readTranscript(
+                stdout: stdout,
+                outputBase: outputBase,
+                preparedAudioURL: preparedAudioURL,
+                workDirectory: workDirectory,
+                stderr: stderr
+            )
+        }
 
         return TranscriptRecord(
             text: text,

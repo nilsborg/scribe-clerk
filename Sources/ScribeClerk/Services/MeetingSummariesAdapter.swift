@@ -6,11 +6,6 @@ struct SummaryResult: Equatable {
     let markdown: String
 }
 
-struct PublishResult: Equatable {
-    let title: String?
-    let documentURL: URL?
-}
-
 protocol SummaryAdapter {
     func generateSummary(
         transcriptPath: URL,
@@ -21,15 +16,6 @@ protocol SummaryAdapter {
     ) async throws -> SummaryResult
 
     func generateTitle(transcriptPath: URL) async throws -> String
-}
-
-protocol DeliveryAdapter {
-    func publish(
-        transcriptPath: URL,
-        summaryPath: URL,
-        recordingTitle: String?,
-        options: SummarizerOptions
-    ) async throws -> PublishResult
 }
 
 enum AdapterError: LocalizedError {
@@ -85,7 +71,7 @@ struct AdapterPaths {
     }
 }
 
-final class MeetingSummariesToNotionAdapter: SummaryAdapter, DeliveryAdapter {
+final class MeetingSummariesToNotionAdapter: SummaryAdapter {
     private let fileManager = FileManager.default
     private var activeProcess: Process?
 
@@ -138,29 +124,6 @@ final class MeetingSummariesToNotionAdapter: SummaryAdapter, DeliveryAdapter {
         return title
     }
 
-    func publish(
-        transcriptPath: URL,
-        summaryPath: URL,
-        recordingTitle: String?,
-        options: SummarizerOptions
-    ) async throws -> PublishResult {
-        let response = try await run(
-            action: "publish",
-            transcriptPath: transcriptPath,
-            summaryPath: summaryPath,
-            recordingTitle: recordingTitle,
-            options: options,
-            skipCache: false
-        )
-
-        guard response.success else {
-            throw AdapterError.adapterFailed(response.error ?? "Publishing failed.")
-        }
-
-        let documentURL = response.documentUrl.flatMap(URL.init(string:))
-        return PublishResult(title: response.title, documentURL: documentURL)
-    }
-
     private struct RunRequest: Encodable {
         let action: String
         let transcriptPath: String
@@ -176,7 +139,6 @@ final class MeetingSummariesToNotionAdapter: SummaryAdapter, DeliveryAdapter {
         let action: String?
         let title: String?
         let summaryPath: String?
-        let documentUrl: String?
         let error: String?
     }
 

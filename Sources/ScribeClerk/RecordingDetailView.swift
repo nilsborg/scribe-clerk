@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct RecordingDetailView: View {
@@ -35,13 +36,9 @@ struct RecordingDetailView: View {
         recording.summaryVariants.contains { $0.status == .queued || $0.status == .generating }
     }
 
-    private var isPublishing: Bool {
-        recording.summaryVariants.contains { $0.status == .publishing }
-    }
-
     private var isSummaryJobActive: Bool {
         recording.summaryVariants.contains {
-            $0.status == .queued || $0.status == .generating || $0.status == .publishing
+            $0.status == .queued || $0.status == .generating
         }
     }
 
@@ -143,14 +140,6 @@ struct RecordingDetailView: View {
                         Label("Reload Transcript", systemImage: "arrow.clockwise")
                     }
 
-                    if let url = workflow.latestNotionURL {
-                        Button {
-                            appState.openPublishedURL(url)
-                        } label: {
-                            Label("Open in Notion", systemImage: "arrow.up.forward.square")
-                        }
-                    }
-
                     Divider()
                 }
 
@@ -194,23 +183,14 @@ struct RecordingDetailView: View {
             .buttonStyle(.borderedProminent)
             .disabled(isSummarizing)
 
-        case .needsPublish(let variant):
+        case .summarized:
             Button {
-                appState.beginPublish(recordingID: recording.id, variantID: variant.id)
+                appState.beginSummary(for: recording.id, regenerate: true)
             } label: {
-                Label(workflow.primaryActionTitle, systemImage: "paperplane")
+                Label(workflow.primaryActionTitle, systemImage: "text.append")
             }
             .buttonStyle(.borderedProminent)
-            .disabled(isPublishing || !workflow.canPublish(variant))
-
-        case .published(let variant):
-            Button {
-                appState.beginPublish(recordingID: recording.id, variantID: variant.id)
-            } label: {
-                Label(workflow.primaryActionTitle, systemImage: "paperplane")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(isPublishing || !workflow.canPublish(variant))
+            .disabled(isSummarizing)
 
         case .inProgress:
             Button {} label: {
@@ -263,12 +243,18 @@ private struct TranscriptTab: View {
                     }
                 }
             } else if let text = appState.transcriptText(for: recording) {
-                ScrollView {
-                    Text(text)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Spacer()
+                        CopyTranscriptButton(text: text)
+                    }
+                    ScrollView {
+                        Text(text)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
                 CenteredEmptyState {
                     ContentUnavailableView {
@@ -283,14 +269,31 @@ private struct TranscriptTab: View {
     }
 }
 
+private struct CopyTranscriptButton: View {
+    let text: String
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            copied = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                copied = false
+            }
+        } label: {
+            Label(copied ? "Copied" : "Copy Transcript",
+                  systemImage: copied ? "checkmark" : "doc.on.doc")
+        }
+        .disabled(copied)
+    }
+}
+
 private struct SummariesTab: View {
     let recording: RecordingRecord
     @ObservedObject var appState: AppState
 
     private var summaryJobPhase: SummaryJobPhase? {
-        if recording.summaryVariants.contains(where: { $0.status == .publishing }) {
-            return .publishing
-        }
         if recording.summaryVariants.contains(where: { $0.status == .generating }) {
             return .running
         }
@@ -302,7 +305,7 @@ private struct SummariesTab: View {
 
     private var displayableVariants: [SummaryVariantRecord] {
         recording.summaryVariants.filter {
-            $0.status != .queued && $0.status != .generating && $0.status != .publishing
+            $0.status != .queued && $0.status != .generating
         }
     }
 
@@ -314,7 +317,7 @@ private struct SummariesTab: View {
                         Label(phase.title, systemImage: phase.icon)
                     } description: {
                         JobProgressView(
-                            kind: phase == .publishing ? .publish : .summary,
+                            kind: .summary,
                             recordingID: recording.id,
                             appState: appState,
                             isQueued: phase == .queued
@@ -354,13 +357,11 @@ private struct SummariesTab: View {
 private enum SummaryJobPhase {
     case queued
     case running
-    case publishing
 
     var title: String {
         switch self {
         case .queued: return "Summary queued"
         case .running: return "Summary running"
-        case .publishing: return "Publishing"
         }
     }
 
@@ -368,7 +369,6 @@ private enum SummaryJobPhase {
         switch self {
         case .queued: return "clock"
         case .running: return "text.append"
-        case .publishing: return "paperplane"
         }
     }
 }
@@ -378,26 +378,6 @@ private struct SummaryVariantCard: View {
     let variant: SummaryVariantRecord
     @ObservedObject var appState: AppState
     @State private var draftMarkdown: String = ""
-    @State private var showHistory = false
-
-    private var isPublishable: Bool {
-        [.ready, .stale, .published, .failed].contains(variant.status)
-    }
-
-    private var isPublishing: Bool {
-        recording.summaryVariants.contains { $0.status == .publishing }
-    }
-
-    private var publishButtonTitle: String {
-        switch variant.status {
-        case .published:
-            return "Re-publish"
-        case .failed:
-            return "Retry Publish"
-        default:
-            return "Send to Notion"
-        }
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -442,34 +422,6 @@ private struct SummaryVariantCard: View {
                 }
             }
 
-            if isPublishable {
-                HStack {
-                    Spacer()
-                    Button {
-                        appState.beginPublish(recordingID: recording.id, variantID: variant.id)
-                    } label: {
-                        Label(publishButtonTitle, systemImage: "paperplane")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isPublishing)
-                }
-            }
-
-            if !variant.publishAttempts.isEmpty {
-                Divider()
-                DisclosureGroup(isExpanded: $showHistory) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(variant.publishAttempts.reversed()) { attempt in
-                            PublishAttemptRow(attempt: attempt, appState: appState)
-                        }
-                    }
-                    .padding(.top, 6)
-                } label: {
-                    Text("Publishing history (\(variant.publishAttempts.count))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
         .padding(14)
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
@@ -480,8 +432,7 @@ private struct RecordingWorkflow {
     enum Step {
         case needsTranscription
         case needsSummary
-        case needsPublish(SummaryVariantRecord)
-        case published(SummaryVariantRecord)
+        case summarized
         case inProgress
     }
 
@@ -489,7 +440,6 @@ private struct RecordingWorkflow {
     let step: Step
     let primaryActionTitle: String
     let primaryActionIcon: String
-    let latestNotionURL: String?
 
     init(recording: RecordingRecord) {
         self.recording = recording
@@ -498,7 +448,6 @@ private struct RecordingWorkflow {
             step = .inProgress
             primaryActionTitle = recording.transcriptionStatus == .queued ? "Queued…" : "Transcribing…"
             primaryActionIcon = "waveform"
-            latestNotionURL = Self.notionURL(from: recording)
             return
         }
 
@@ -508,7 +457,6 @@ private struct RecordingWorkflow {
             step = .needsSummary
             primaryActionTitle = "Summarize"
             primaryActionIcon = "text.append"
-            latestNotionURL = Self.notionURL(from: recording)
             return
         }
 
@@ -516,7 +464,6 @@ private struct RecordingWorkflow {
             step = .needsTranscription
             primaryActionTitle = recording.transcriptionStatus == .failed ? "Retry Transcribe" : "Transcribe"
             primaryActionIcon = "waveform"
-            latestNotionURL = nil
             return
         }
 
@@ -524,7 +471,6 @@ private struct RecordingWorkflow {
             step = .inProgress
             primaryActionTitle = "Queued…"
             primaryActionIcon = "clock"
-            latestNotionURL = Self.notionURL(from: recording)
             return
         }
 
@@ -532,58 +478,19 @@ private struct RecordingWorkflow {
             step = .inProgress
             primaryActionTitle = "Summarizing…"
             primaryActionIcon = "text.append"
-            latestNotionURL = Self.notionURL(from: recording)
             return
         }
 
-        if recording.summaryVariants.contains(where: { $0.status == .publishing }) {
-            step = .inProgress
-            primaryActionTitle = "Publishing…"
-            primaryActionIcon = "paperplane"
-            latestNotionURL = Self.notionURL(from: recording)
+        if Self.needsFirstSummary(recording) {
+            step = .needsSummary
+            primaryActionTitle = "Summarize"
+            primaryActionIcon = "text.append"
             return
         }
 
-        let leadVariant = Self.leadVariant(in: recording)
-
-        if let leadVariant, leadVariant.status == .published {
-            step = .published(leadVariant)
-            primaryActionTitle = "Re-publish"
-            primaryActionIcon = "paperplane"
-            latestNotionURL = Self.notionURL(from: recording)
-            return
-        }
-
-        if let leadVariant, Self.isPublishable(leadVariant) {
-            step = .needsPublish(leadVariant)
-            primaryActionTitle = leadVariant.status == .failed ? "Retry Publish" : "Send to Notion"
-            primaryActionIcon = "paperplane"
-            latestNotionURL = Self.notionURL(from: recording)
-            return
-        }
-
-        step = .needsSummary
-        primaryActionTitle = "Summarize"
+        step = .summarized
+        primaryActionTitle = "Re-summarize"
         primaryActionIcon = "text.append"
-        latestNotionURL = Self.notionURL(from: recording)
-    }
-
-    func canPublish(_ variant: SummaryVariantRecord) -> Bool {
-        Self.isPublishable(variant)
-    }
-
-    private static func isPublishable(_ variant: SummaryVariantRecord) -> Bool {
-        [.ready, .stale, .published, .failed].contains(variant.status)
-    }
-
-    private static func leadVariant(in recording: RecordingRecord) -> SummaryVariantRecord? {
-        if let published = recording.summaryVariants.first(where: { $0.status == .published }) {
-            return published
-        }
-        if let ready = recording.summaryVariants.first(where: { [.ready, .stale, .failed].contains($0.status) }) {
-            return ready
-        }
-        return recording.summaryVariants.first
     }
 
     private static func needsFirstSummary(_ recording: RecordingRecord) -> Bool {
@@ -591,43 +498,6 @@ private struct RecordingWorkflow {
             || recording.summaryVariants.allSatisfy {
                 $0.status == .notStarted || ($0.status == .failed && $0.markdownFileName == nil)
             }
-    }
-
-    private static func notionURL(from recording: RecordingRecord) -> String? {
-        recording.summaryVariants
-            .flatMap(\.publishAttempts)
-            .last(where: { $0.success })?
-            .destinationURL
-    }
-}
-
-private struct PublishAttemptRow: View {
-    let attempt: PublishAttempt
-    @ObservedObject var appState: AppState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: attempt.success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .foregroundStyle(attempt.success ? .green : .red)
-                Text(attempt.attemptedAt, format: .dateTime.day().month().hour().minute())
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let url = attempt.destinationURL {
-                Button(url) {
-                    appState.openPublishedURL(url)
-                }
-                .buttonStyle(.link)
-                .font(.caption)
-                .lineLimit(1)
-            }
-            if let error = attempt.errorMessage {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-        }
     }
 }
 
@@ -649,8 +519,6 @@ private struct VariantStatusBadge: View {
         case .queued: return "Queued"
         case .generating: return "Generating"
         case .ready: return "Ready"
-        case .publishing: return "Publishing"
-        case .published: return "Published"
         case .failed: return "Failed"
         case .stale: return "Stale"
         }
@@ -658,11 +526,10 @@ private struct VariantStatusBadge: View {
 
     private var color: Color {
         switch status {
-        case .published: return .green
         case .ready: return .blue
         case .failed: return .red
         case .queued: return .accentColor
-        case .generating, .publishing: return .accentColor
+        case .generating: return .accentColor
         case .stale: return .orange
         case .notStarted: return .secondary
         }
@@ -690,7 +557,6 @@ private struct JobProgressView: View {
     enum Kind {
         case transcription
         case summary
-        case publish
     }
 
     let kind: Kind
@@ -727,8 +593,6 @@ private struct JobProgressView: View {
             return appState.transcriptionProgressLabel(for: recordingID)
         case .summary:
             return "Summarizing…"
-        case .publish:
-            return "Publishing…"
         }
     }
 }

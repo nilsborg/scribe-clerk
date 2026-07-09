@@ -33,34 +33,13 @@ enum SummaryVariantStatus: String, Codable {
     case queued
     case generating
     case ready
-    case publishing
-    case published
     case failed
     case stale
-}
 
-struct PublishAttempt: Codable, Identifiable, Equatable {
-    let id: String
-    let attemptedAt: Date
-    var success: Bool
-    var destinationType: String
-    var destinationURL: String?
-    var errorMessage: String?
-
-    init(
-        id: String = UUID().uuidString,
-        attemptedAt: Date = Date(),
-        success: Bool,
-        destinationType: String = "notion",
-        destinationURL: String? = nil,
-        errorMessage: String? = nil
-    ) {
-        self.id = id
-        self.attemptedAt = attemptedAt
-        self.success = success
-        self.destinationType = destinationType
-        self.destinationURL = destinationURL
-        self.errorMessage = errorMessage
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        // Legacy Notion publish statuses collapse to `ready`.
+        self = SummaryVariantStatus(rawValue: raw) ?? .ready
     }
 }
 
@@ -72,7 +51,6 @@ struct SummaryVariantRecord: Codable, Identifiable, Equatable {
     var title: String?
     var generatedAt: Date?
     var errorMessage: String?
-    var publishAttempts: [PublishAttempt]
 
     var id: String {
         Self.variantKey(flow: flow, language: language)
@@ -94,8 +72,7 @@ struct SummaryVariantRecord: Codable, Identifiable, Equatable {
             markdownFileName: nil,
             title: nil,
             generatedAt: nil,
-            errorMessage: nil,
-            publishAttempts: []
+            errorMessage: nil
         )
     }
 }
@@ -165,7 +142,7 @@ struct RecordingRecord: Codable, Identifiable, Equatable {
     }
 
     mutating func markSummariesStale() {
-        for index in summaryVariants.indices where summaryVariants[index].status == .ready || summaryVariants[index].status == .published {
+        for index in summaryVariants.indices where summaryVariants[index].status == .ready {
             summaryVariants[index].status = .stale
         }
     }
@@ -214,7 +191,6 @@ enum RecordingFilterStatus: String, CaseIterable, Identifiable {
     case imported
     case transcribed
     case summarized
-    case published
 
     var id: String { rawValue }
 
@@ -228,8 +204,6 @@ enum RecordingFilterStatus: String, CaseIterable, Identifiable {
             return "Transcribed"
         case .summarized:
             return "Summarized"
-        case .published:
-            return "Published"
         }
     }
 }

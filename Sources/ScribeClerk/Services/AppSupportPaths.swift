@@ -126,10 +126,6 @@ enum AppSupportPaths {
 
         let template = """
         OPENROUTER_API_KEY=""
-        NOTION_API_KEY=""
-        NOTION_MEETING_DATABASE_ID=""
-        NOTION_USER_ID=""
-        NOTION_PROJECT_UPDATES_DATABASE_ID=""
         """
             .split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
