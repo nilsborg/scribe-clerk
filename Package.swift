@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "ScribeClerk",
             path: "Sources/ScribeClerk"
+        ),
+        .testTarget(
+            name: "ScribeClerkTests",
+            dependencies: ["ScribeClerk"],
+            path: "Tests/ScribeClerkTests"
         )
     ]
 )

@@ -245,6 +245,14 @@ private struct TranscriptTab: View {
             } else if let text = appState.transcriptText(for: recording) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
+                        if let transcriptURL = appState.transcriptURL(for: recording) {
+                            TranscriptFileChip(
+                                recording: recording,
+                                transcriptURL: transcriptURL
+                            ) {
+                                appState.openTranscriptExternally(for: recording.id)
+                            }
+                        }
                         Spacer()
                         CopyTranscriptButton(text: text)
                     }
@@ -266,6 +274,61 @@ private struct TranscriptTab: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct TranscriptFileChip: View {
+    let recording: RecordingRecord
+    let transcriptURL: URL
+    let openTranscript: () -> Void
+
+    private var exportFileName: String {
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: recording.displayDate)
+        let date = String(
+            format: "%04d-%02d-%02d",
+            components.year ?? 0,
+            components.month ?? 0,
+            components.day ?? 0
+        )
+        let title = recording.title
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(date) – \(title.isEmpty ? "Transcript" : title).txt"
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "doc.text")
+                .font(.title3)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(exportFileName)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("Drag to share")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: openTranscript)
+        .onDrag {
+            let provider = NSItemProvider(contentsOf: transcriptURL) ?? NSItemProvider(object: transcriptURL as NSURL)
+            provider.suggestedName = exportFileName
+            return provider
+        } preview: {
+            Label(exportFileName, systemImage: "doc.text")
+                .padding(10)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        }
+        .help("Drag this transcript to Slack or Finder. Click to open it.")
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(named: "Open Transcript", openTranscript)
     }
 }
 

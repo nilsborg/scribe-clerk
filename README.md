@@ -7,9 +7,25 @@ Transcribe audio locally with [whisper.cpp](https://github.com/ggerganov/whisper
 - macOS 14+
 - `whisper-cli` (Homebrew: `brew install whisper-cpp`)
 - `deno` (Homebrew: `brew install deno`)
-- GGML models in `~/whisper-models/` (defaults to `ggml-medium.bin`)
+- GGML models in `~/whisper-models/` (defaults to `ggml-large-v3-turbo.bin`)
+- Silero VAD model at `~/whisper-models/ggml-silero-v6.2.0.bin` (recommended)
 - Adapter `.env` with an OpenRouter credential (see `Adapters/MeetingSummariesToNotion/.env.example`)
 - (Optional) sherpa-onnx for speaker detection — see below
+
+## Voice activity detection
+
+Voice activity detection skips silence before Whisper runs, which speeds up
+meeting recordings and reduces silence-related hallucinations. Download the
+small Silero model into the Whisper models folder:
+
+```bash
+curl -L https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin \
+  -o ~/whisper-models/ggml-silero-v6.2.0.bin
+```
+
+It is enabled by default when the model is present and can be disabled in
+Settings. Recent whisper.cpp releases preserve the original audio timestamps,
+so VAD also works with speaker detection.
 
 ## Speaker detection (optional)
 
@@ -17,7 +33,8 @@ Enable **Identify speakers** in the transcribe dialog to label the transcript by
 speaker (`Speaker 1:`, `Speaker 2:` …). Whisper still does the transcription in
 your chosen language and model; a separate [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
 diarization pass figures out *who* spoke when, and the two are merged by
-timestamp. It works in any language, including German.
+timestamp. Both stages run concurrently from one prepared WAV. It works in any
+language, including German.
 
 **1. Install the sherpa-onnx binary.** Either via pip:
 
@@ -97,7 +114,7 @@ Press **⌘R** to build and run.
 
 ## Settings (⌘,)
 
-- Whisper binary and default model
+- Whisper binary, default model, VAD, and transcription vocabulary
 - sherpa-onnx binary for speaker detection
 - Deno binary path
 - Adapter `.env` file path

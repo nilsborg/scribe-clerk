@@ -57,7 +57,9 @@ final class SpeakerDiarizer {
     private var activeProcess: Process?
 
     func cancel() {
-        activeProcess?.terminate()
+        if activeProcess?.isRunning == true {
+            activeProcess?.terminate()
+        }
     }
 
     func diarize(
@@ -106,6 +108,16 @@ final class SpeakerDiarizer {
             Task { @MainActor in onLog("[diarize] Identifying speakers…\n") }
         }
 
+        // Drain stdout while the process runs so long recordings with many turns
+        // cannot fill the pipe and block diarization before it exits.
+        let stdoutBuffer = LogBuffer()
+        let stdoutHandle = stdoutPipe.fileHandleForReading
+        stdoutHandle.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else { return }
+            stdoutBuffer.append(chunk)
+        }
+
         // Stream stderr live so its `progress N%` lines drive the progress bar.
         let stderrBuffer = LogBuffer()
         let stderrHandle = stderrPipe.fileHandleForReading
@@ -121,7 +133,11 @@ final class SpeakerDiarizer {
         activeProcess = process
         defer { activeProcess = nil }
 
+        try Task.checkCancellation()
         try process.run()
+        if Task.isCancelled {
+            process.terminate()
+        }
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             process.terminationHandler = { process in
@@ -135,15 +151,16 @@ final class SpeakerDiarizer {
 
         try Task.checkCancellation()
 
+        stdoutHandle.readabilityHandler = nil
+        if let remaining = String(data: stdoutHandle.readDataToEndOfFile(), encoding: .utf8) {
+            stdoutBuffer.append(remaining)
+        }
         stderrHandle.readabilityHandler = nil
         if let remaining = String(data: stderrHandle.readDataToEndOfFile(), encoding: .utf8) {
             stderrBuffer.append(remaining)
         }
         let stderr = stderrBuffer.text
-        let stdout = String(
-            data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(),
-            encoding: .utf8
-        ) ?? ""
+        let stdout = stdoutBuffer.text
 
         guard process.terminationStatus == 0 else {
             if process.terminationReason == .uncaughtSignal {

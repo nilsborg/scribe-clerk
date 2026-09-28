@@ -543,6 +543,11 @@ final class AppState: ObservableObject {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
+    func transcriptURL(for record: RecordingRecord) -> URL? {
+        guard let url = store.transcriptURL(for: record) else { return nil }
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
     func transcriptText(for record: RecordingRecord) -> String? {
         store.readTranscript(for: record)
     }
@@ -708,8 +713,15 @@ final class AppState: ObservableObject {
             record.transcriptionError = nil
             persist(record)
             clearWhisperLog()
+            let settings = AppSettings.shared
+            let vadLabel = settings.voiceActivityDetectionEnabled && WhisperVAD.isConfigured
+                ? " + VAD"
+                : ""
+            let speakerLabel = item.options.identifySpeakers ? " + speakers" : ""
             appendWhisperLog(
-                "$ whisper-cli -l \(item.options.language) \"\(audioURL.lastPathComponent)\"\n\n"
+                "$ whisper-cli [\(WhisperModelCatalog.displayName(for: item.options.modelPath))]"
+                    + " -l \(item.options.language)\(vadLabel)\(speakerLabel)"
+                    + " \"\(audioURL.lastPathComponent)\"\n\n"
             )
 
             do {

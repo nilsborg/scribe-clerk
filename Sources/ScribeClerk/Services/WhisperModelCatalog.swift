@@ -4,7 +4,7 @@ struct WhisperModelCatalog {
     static let modelsDirectory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("whisper-models", isDirectory: true)
 
-    static let preferredModelFileName = "ggml-medium.bin"
+    static let preferredModelFileName = "ggml-large-v3-turbo.bin"
 
     private static let knownModels: [(fileName: String, label: String, sortOrder: Int)] = [
         ("ggml-tiny.bin", "Tiny", 10),
@@ -13,9 +13,9 @@ struct WhisperModelCatalog {
         ("ggml-base.en.bin", "Base (English)", 21),
         ("ggml-small.bin", "Small", 30),
         ("ggml-small.en.bin", "Small (English)", 31),
-        ("ggml-medium.bin", "Medium (default)", 40),
+        ("ggml-medium.bin", "Medium", 40),
         ("ggml-medium.en.bin", "Medium (English)", 41),
-        ("ggml-large-v3-turbo.bin", "Large v3 Turbo", 50),
+        ("ggml-large-v3-turbo.bin", "Large v3 Turbo (default)", 50),
         ("ggml-large-v3.bin", "Large v3", 51),
         ("ggml-large-v2.bin", "Large v2", 52),
         ("ggml-large-v1.bin", "Large v1", 53),
@@ -70,6 +70,18 @@ struct WhisperModelCatalog {
             return known.label
         }
         return fileName
+    }
+
+    static func resolvedDefaultModelPath(configuredPath: String, availablePaths: [String]) -> String {
+        if availablePaths.contains(configuredPath) {
+            return configuredPath
+        }
+        if let preferred = availablePaths.first(where: {
+            URL(fileURLWithPath: $0).lastPathComponent == preferredModelFileName
+        }) {
+            return preferred
+        }
+        return availablePaths.first ?? preferredDefaultModelPath()
     }
 
     private static func sortPaths(_ lhs: String, _ rhs: String) -> Bool {

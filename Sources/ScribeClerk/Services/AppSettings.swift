@@ -9,6 +9,8 @@ final class AppSettings {
         static let whisperBinaryPath = "whisperBinaryPath"
         static let diarizationBinaryPath = "diarizationBinaryPath"
         static let defaultModelPath = "defaultModelPath"
+        static let voiceActivityDetectionEnabled = "voiceActivityDetectionEnabled"
+        static let transcriptionVocabulary = "transcriptionVocabulary"
         static let denoBinaryPath = "denoBinaryPath"
         static let adapterEnvPath = "adapterEnvPath"
         static let defaultSummarizerFlow = "defaultSummarizerFlow"
@@ -55,6 +57,33 @@ final class AppSettings {
         }
     }
 
+    var voiceActivityDetectionEnabled: Bool {
+        get {
+            defaults.object(forKey: Keys.voiceActivityDetectionEnabled) as? Bool ?? true
+        }
+        set {
+            defaults.set(newValue, forKey: Keys.voiceActivityDetectionEnabled)
+        }
+    }
+
+    var transcriptionVocabulary: String {
+        get {
+            defaults.string(forKey: Keys.transcriptionVocabulary) ?? ""
+        }
+        set {
+            defaults.set(newValue, forKey: Keys.transcriptionVocabulary)
+        }
+    }
+
+    var transcriptionPrompt: String? {
+        let vocabulary = transcriptionVocabulary
+            .split(whereSeparator: { $0.isNewline })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+        return vocabulary.isEmpty ? nil : vocabulary
+    }
+
     var denoBinaryPath: String {
         get {
             defaults.string(forKey: Keys.denoBinaryPath) ?? Self.defaultDenoBinaryPath
@@ -88,17 +117,10 @@ final class AppSettings {
 
     func defaultTranscriptionOptions() -> TranscriptionOptions {
         let models = WhisperModelCatalog.availableModels(defaultPath: defaultModelPath)
-        let modelPath: String
-
-        if let medium = models.first(where: {
-            URL(fileURLWithPath: $0).lastPathComponent == WhisperModelCatalog.preferredModelFileName
-        }) {
-            modelPath = medium
-        } else if models.contains(defaultModelPath) {
-            modelPath = defaultModelPath
-        } else {
-            modelPath = models.first ?? WhisperModelCatalog.preferredDefaultModelPath()
-        }
+        let modelPath = WhisperModelCatalog.resolvedDefaultModelPath(
+            configuredPath: defaultModelPath,
+            availablePaths: models
+        )
 
         return TranscriptionOptions(
             language: "auto",

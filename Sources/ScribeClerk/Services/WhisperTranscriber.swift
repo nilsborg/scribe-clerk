@@ -34,10 +34,14 @@ enum WhisperTranscriberError: LocalizedError {
 
 final class WhisperTranscriber {
     private let audioConverter = AudioConverter()
+    private let speakerDiarizer = SpeakerDiarizer()
     private var activeProcess: Process?
 
     func cancel() {
-        activeProcess?.terminate()
+        if activeProcess?.isRunning == true {
+            activeProcess?.terminate()
+        }
+        speakerDiarizer.cancel()
     }
 
     func transcribe(
@@ -69,8 +73,18 @@ final class WhisperTranscriber {
         try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: workDirectory) }
 
-        let preparedAudioURL = try audioConverter.whisperReadyWAV(from: audioURL, in: workDirectory)
+        let preparedAudioURL = try audioConverter.transcriptionReadyWAV(from: audioURL, in: workDirectory)
         let outputBase = workDirectory.appendingPathComponent("transcript")
+
+        let diarizationTask: Task<[SpeakerTurn], Error>? = options.identifySpeakers
+            ? Task {
+                try await speakerDiarizer.diarize(
+                    audioURL: preparedAudioURL,
+                    speakerCount: options.speakerCount,
+                    onLog: onLog
+                )
+            }
+            : nil
 
         let process = Process()
         process.executableURL = binaryURL
@@ -91,6 +105,12 @@ final class WhisperTranscriber {
         } else {
             arguments += ["-otxt", "-nt"]
         }
+        if settings.voiceActivityDetectionEnabled, WhisperVAD.isConfigured {
+            arguments += ["--vad", "--vad-model", WhisperVAD.modelURL.path]
+        }
+        if let prompt = settings.transcriptionPrompt {
+            arguments += ["--prompt", prompt, "--carry-initial-prompt"]
+        }
         arguments.append(preparedAudioURL.path)
         process.arguments = arguments
 
@@ -109,70 +129,79 @@ final class WhisperTranscriber {
             _ = finishStderr()
         }
 
-        try process.run()
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            process.terminationHandler = { process in
-                if Task.isCancelled || process.terminationReason == .uncaughtSignal {
-                    continuation.resume(throwing: WhisperTranscriberError.cancelled)
-                    return
+        do {
+            if settings.voiceActivityDetectionEnabled, !WhisperVAD.isConfigured, let onLog {
+                Task { @MainActor in
+                    onLog("[vad] \(WhisperVAD.setupHint) Continuing without VAD.\n")
                 }
-                continuation.resume()
             }
-        }
 
-        try Task.checkCancellation()
-
-        let stdout = finishStdout().trimmingCharacters(in: .whitespacesAndNewlines)
-        let stderr = finishStderr().trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard process.terminationStatus == 0 else {
-            if process.terminationReason == .uncaughtSignal {
-                throw WhisperTranscriberError.cancelled
+            try Task.checkCancellation()
+            try process.run()
+            if Task.isCancelled {
+                process.terminate()
             }
-            throw WhisperTranscriberError.processFailed(
-                stderr.isEmpty ? "Whisper exited with code \(process.terminationStatus)." : stderr
-            )
-        }
 
-        let text: String
-        if options.identifySpeakers {
-            let segments = try TranscriptSegment.parseWhisperJSON(
-                at: URL(fileURLWithPath: outputBase.path + ".json")
-            )
-            if let onPhase {
-                Task { @MainActor in onPhase(.diarizing) }
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                process.terminationHandler = { process in
+                    if Task.isCancelled || process.terminationReason == .uncaughtSignal {
+                        continuation.resume(throwing: WhisperTranscriberError.cancelled)
+                        return
+                    }
+                    continuation.resume()
+                }
             }
-            // sherpa-onnx needs a canonical 16 kHz mono PCM WAV; the whisper-prepared
-            // file uses afconvert's extensible header, which it rejects. Make a
-            // canonical copy from the source.
-            let diarizationInput = try audioConverter.sixteenKMonoWAV(
-                from: audioURL, in: workDirectory
-            )
-            let speakerTurns = try await SpeakerDiarizer().diarize(
-                audioURL: diarizationInput,
-                speakerCount: options.speakerCount,
-                onLog: onLog
-            )
-            text = SpeakerLabeler.label(segments: segments, with: speakerTurns)
-        } else {
-            text = try readTranscript(
-                stdout: stdout,
-                outputBase: outputBase,
-                preparedAudioURL: preparedAudioURL,
-                workDirectory: workDirectory,
-                stderr: stderr
-            )
-        }
 
-        return TranscriptRecord(
-            text: text,
-            language: options.language,
-            modelPath: options.modelPath,
-            createdAt: Date(),
-            sourceURLString: nil,
-            sourceName: nil
-        )
+            try Task.checkCancellation()
+
+            let stdout = finishStdout().trimmingCharacters(in: .whitespacesAndNewlines)
+            let stderr = finishStderr().trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard process.terminationStatus == 0 else {
+                if process.terminationReason == .uncaughtSignal {
+                    throw WhisperTranscriberError.cancelled
+                }
+                throw WhisperTranscriberError.processFailed(
+                    stderr.isEmpty ? "Whisper exited with code \(process.terminationStatus)." : stderr
+                )
+            }
+
+            let text: String
+            if let diarizationTask {
+                let segments = try TranscriptSegment.parseWhisperJSON(
+                    at: URL(fileURLWithPath: outputBase.path + ".json")
+                )
+                if let onPhase {
+                    Task { @MainActor in onPhase(.diarizing) }
+                }
+                let speakerTurns = try await diarizationTask.value
+                text = SpeakerLabeler.label(segments: segments, with: speakerTurns)
+            } else {
+                text = try readTranscript(
+                    stdout: stdout,
+                    outputBase: outputBase,
+                    preparedAudioURL: preparedAudioURL,
+                    workDirectory: workDirectory,
+                    stderr: stderr
+                )
+            }
+
+            return TranscriptRecord(
+                text: text,
+                language: options.language,
+                modelPath: options.modelPath,
+                createdAt: Date(),
+                sourceURLString: nil,
+                sourceName: nil
+            )
+        } catch {
+            diarizationTask?.cancel()
+            speakerDiarizer.cancel()
+            if let diarizationTask {
+                _ = try? await diarizationTask.value
+            }
+            throw error
+        }
     }
 
     private func attachStream(

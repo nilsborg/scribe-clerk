@@ -12,22 +12,10 @@ enum AudioConverterError: LocalizedError {
 }
 
 struct AudioConverter {
-    /// Voice Memos recordings are `.m4a`, while whisper-cli reliably supports wav/flac/mp3/ogg.
-    /// Convert to 16 kHz mono WAV using the built-in `afconvert` tool.
-    func whisperReadyWAV(from sourceURL: URL, in directory: URL) throws -> URL {
-        let lowercasedExtension = sourceURL.pathExtension.lowercased()
-        if lowercasedExtension == "wav" {
-            return sourceURL
-        }
-
-        return try convertToSixteenKMonoWAV(from: sourceURL, in: directory)
-    }
-
-    /// Produces a 16 kHz mono WAV with a *canonical* PCM header (16-byte `fmt `
-    /// chunk, format tag 1). sherpa-onnx diarization requires this exact layout —
-    /// it hard-errors on afconvert's default WAVE_FORMAT_EXTENSIBLE header and does
-    /// not resample — so we rewrite the header after converting.
-    func sixteenKMonoWAV(from sourceURL: URL, in directory: URL) throws -> URL {
+    /// Produces the single 16 kHz mono PCM WAV used by both Whisper and sherpa-onnx.
+    /// `afconvert` writes a WAVE_FORMAT_EXTENSIBLE header that sherpa rejects, so
+    /// canonicalize it once rather than converting the source separately per stage.
+    func transcriptionReadyWAV(from sourceURL: URL, in directory: URL) throws -> URL {
         let converted = try convertToSixteenKMonoWAV(from: sourceURL, in: directory)
         let canonicalURL = directory.appendingPathComponent("\(UUID().uuidString)-pcm.wav")
         try Self.writeCanonicalPCMWAV(from: converted, to: canonicalURL)

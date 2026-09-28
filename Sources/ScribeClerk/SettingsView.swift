@@ -3,6 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     @State private var whisperPath = AppSettings.shared.whisperBinaryPath
     @State private var defaultModelPath = AppSettings.shared.defaultModelPath
+    @State private var voiceActivityDetectionEnabled = AppSettings.shared.voiceActivityDetectionEnabled
+    @State private var transcriptionVocabulary = AppSettings.shared.transcriptionVocabulary
     @State private var diarizationPath = AppSettings.shared.diarizationBinaryPath
     @State private var denoPath = AppSettings.shared.denoBinaryPath
     @State private var adapterEnvPath = AppSettings.shared.adapterEnvPath
@@ -15,11 +17,47 @@ struct SettingsView: View {
         return SpeakerDiarizer.setupHint
     }
 
+    private var vadStatus: String {
+        if !voiceActivityDetectionEnabled {
+            return "Disabled. Whisper will process the full recording."
+        }
+        return WhisperVAD.isConfigured
+            ? "Ready. Silence is skipped before transcription."
+            : WhisperVAD.setupHint
+    }
+
     var body: some View {
         Form {
             Section("Whisper") {
                 TextField("Whisper binary", text: $whisperPath)
                 TextField("Default model", text: $defaultModelPath)
+
+                Toggle("Skip silence with voice activity detection", isOn: $voiceActivityDetectionEnabled)
+                Text(vadStatus)
+                    .font(.caption)
+                    .foregroundStyle(
+                        !voiceActivityDetectionEnabled || WhisperVAD.isConfigured
+                            ? Color.secondary
+                            : Color.red
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button("Reveal Whisper Models Folder") {
+                    try? FileManager.default.createDirectory(
+                        at: WhisperModelCatalog.modelsDirectory,
+                        withIntermediateDirectories: true
+                    )
+                    AppSupportPaths.revealInFinder(WhisperModelCatalog.modelsDirectory)
+                }
+
+                Text("Transcription vocabulary")
+                TextEditor(text: $transcriptionVocabulary)
+                    .font(.body)
+                    .frame(minHeight: 72)
+                Text("Add names, products, abbreviations, and specialist terms—one per line. They are supplied to Whisper as context for every recording.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("Speaker detection") {
@@ -71,7 +109,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(width: 540, height: 420)
+        .frame(width: 560, height: 620)
         .onAppear {
             let resolved = AppSettings.shared.adapterEnvPath
             adapterEnvPath = resolved
@@ -81,6 +119,12 @@ struct SettingsView: View {
         }
         .onChange(of: defaultModelPath) { _, newValue in
             AppSettings.shared.defaultModelPath = newValue
+        }
+        .onChange(of: voiceActivityDetectionEnabled) { _, newValue in
+            AppSettings.shared.voiceActivityDetectionEnabled = newValue
+        }
+        .onChange(of: transcriptionVocabulary) { _, newValue in
+            AppSettings.shared.transcriptionVocabulary = newValue
         }
         .onChange(of: diarizationPath) { _, newValue in
             AppSettings.shared.diarizationBinaryPath = newValue

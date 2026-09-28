@@ -11,11 +11,11 @@ enum WhisperProgressParser {
         let matches = pattern.matches(in: text, range: range)
         guard let last = matches.last,
               let matchRange = Range(last.range(at: 1), in: text),
-              let value = Int(text[matchRange]),
-              (0 ... 100).contains(value) else {
+              let value = Int(text[matchRange]) else {
             return nil
         }
-        return Double(value) / 100.0
+        // Very short VAD inputs can make whisper.cpp report values above 100%.
+        return Double(min(value, 100)) / 100.0
     }
 }
 
@@ -30,10 +30,9 @@ enum DiarizationProgressParser {
         let matches = pattern.matches(in: text, range: range)
         guard let last = matches.last,
               let matchRange = Range(last.range(at: 1), in: text),
-              let value = Double(text[matchRange]),
-              (0 ... 100).contains(value) else {
+              let value = Double(text[matchRange]) else {
             return nil
         }
-        return value / 100.0
+        return min(value, 100) / 100.0
     }
 }
