@@ -110,6 +110,11 @@ final class WhisperTranscriber {
         }
         if let prompt = settings.transcriptionPrompt {
             arguments += ["--prompt", prompt, "--carry-initial-prompt"]
+        } else {
+            // Don't condition on previous text: on long recordings a short
+            // filler ("Ja. Ja.") otherwise loops through the rest of the file.
+            // Only without a prompt, since whisper.cpp drops the prompt at -mc 0.
+            arguments += ["-mc", "0"]
         }
         arguments.append(preparedAudioURL.path)
         process.arguments = arguments
